@@ -1,0 +1,14 @@
+#!name=中青看点极速版 - 阅读与签到
+#!desc=中青看点极速版 Cookie 获取（阅读/时长/签到）
+[MITM]
+hostname = *.youth.cn, ios.baertt.com
+
+[Script]
+# 中青阅读数据
+http-request ^https?://ios\.baertt\.com/v5/article/complete script-path=https://raw.githubusercontent.com/XWF888/Task/Main/zqkd/zqread.js, requires-body=true, timeout=10, tag=中青阅读数据
+
+# 阅读时长数据（超过1分钟才保存）
+http-request ^https?://ios\.baertt\.com/v5/user/app_stay\.json script-path=https://raw.githubusercontent.com/XWF888/Task/Main/zqkd/zqread.js, requires-body=true, timeout=10, tag=中青阅读时长
+
+# 签到、宝箱数据（我的→任务中心）
+http-request ^https?://\w+\.youth\.cn/(TaskCenter|WebApi/NewTaskIos)/(sign|getSign)(\?.+)?$ script-path=https://raw.githubusercontent.com/XWF888/Task/Main/zqkd/zqread.js, requires-body=true, timeout=10, tag=中青签到与宝箱
