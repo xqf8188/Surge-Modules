@@ -4,7 +4,6 @@
 #!category=WeChat
 #!version=1.0
 
-[Rule]
 # DOMAIN: 18
 # DOMAIN-SUFFIX: 22
 # USER-AGENT: 2
