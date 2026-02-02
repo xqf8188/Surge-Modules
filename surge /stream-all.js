@@ -60,7 +60,7 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 async function check_chatgpt() {
     return new Promise((resolve) => {
         let option = {
-            url: 'https://ios.chat.openai.com/v1/sentinel/chat-requirements',
+            url: 'https://chatgpt.com',
             headers: REQUEST_HEADERS,
             timeout: 5000
         }
