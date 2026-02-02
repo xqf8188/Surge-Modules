@@ -2,4 +2,4 @@
 StreamCheck = script-name=stream-all, update-interval=43200
 
 [Script]
-stream-all = type=generic, script-path=https://raw.githubusercontent.com/你的路径/stream-all.js, argument=title=流媒体检测&icon=play.tv.fill&color=#FF2D55
+stream-all = type=generic, script-path=https://raw.githubusercontent.com/xqf8188/Surge-Modules/refs/heads/main/surge%20/stream-all.js, argument=title=流媒体检测&icon=play.tv.fill&color=#FF2D55
