@@ -1,5 +1,5 @@
 /*
- * 整合脚本：网络信息 (全显 IP + 策略名/节点名 + 落地IP版)
+ * 整合脚本：网络信息 (全显 IP + 精准策略名 + 落地IP版)
  * 支持：Surge, Loon, Stash
  */
 
@@ -23,14 +23,15 @@ const REQUEST_HEADERS = {
     if (v4 && arg.LAN == 1) LAN = `LAN: ${v4}\n\n`
   }
 
-  // --- 核心改动：多重方式获取节点名称 ---
+  // --- 核心逻辑：精准获取当前代理策略名 ---
   if (typeof $session !== 'undefined' && $session.proxy) {
-    // 优先显示策略名 (如: 🚀 自动选择)
+    // 适配 Loon 或通用环境
     PROXY_DISPLAY = `策略: ${$session.proxy}\n`
-  } else if (typeof $surge !== 'undefined' && $surge.getSelectGroupPolicy) {
-    // 兼容 Surge 的另一种获取方式
-    let group = arg.group || "Proxy"
-    PROXY_DISPLAY = `节点: ${$surge.getSelectGroupPolicy(group)}\n`
+  } else if (typeof $surge !== 'undefined') {
+    // 适配 Surge 环境：尝试获取当前活跃的策略
+    const groupName = arg.group || "Proxy" // 默认尝试抓取名为 Proxy 的策略组
+    const activePolicy = $surge.getSelectGroupPolicy ? $surge.getSelectGroupPolicy(groupName) : null
+    PROXY_DISPLAY = `策略: ${activePolicy || "检测中..."}\n`
   }
 
   // 2. 并发执行检测
