@@ -1,5 +1,5 @@
 /*
- * 整合脚本：网络信息 (全显 IP + 策略名 + 落地IP版)
+ * 整合脚本：网络信息 (全显 IP + 策略名/节点名 + 落地IP版)
  * 支持：Surge, Loon, Stash
  */
 
@@ -15,7 +15,7 @@ const REQUEST_HEADERS = {
 
 !(async () => {
   // 1. 获取基础网络与策略信息
-  let SSID = '', LAN = '', PROXY_NAME = ''
+  let SSID = '', LAN = '', PROXY_DISPLAY = ''
   
   if (typeof $network !== 'undefined') {
     const v4 = $.lodash_get($network, 'v4.primaryAddress')
@@ -23,9 +23,14 @@ const REQUEST_HEADERS = {
     if (v4 && arg.LAN == 1) LAN = `LAN: ${v4}\n\n`
   }
 
-  // 获取当前选中的策略名 (Surge/Loon 支持)
+  // --- 核心改动：多重方式获取节点名称 ---
   if (typeof $session !== 'undefined' && $session.proxy) {
-    PROXY_NAME = `策略: ${$session.proxy}\n`
+    // 优先显示策略名 (如: 🚀 自动选择)
+    PROXY_DISPLAY = `策略: ${$session.proxy}\n`
+  } else if (typeof $surge !== 'undefined' && $surge.getSelectGroupPolicy) {
+    // 兼容 Surge 的另一种获取方式
+    let group = arg.group || "Proxy"
+    PROXY_DISPLAY = `节点: ${$surge.getSelectGroupPolicy(group)}\n`
   }
 
   // 2. 并发执行检测
@@ -42,10 +47,9 @@ const REQUEST_HEADERS = {
   const title = `网络信息 & 流媒体`
   const media_content = [yt, nf, gpt, disney].join('\n')
   
-  // 核心改动：这里将 "节点" 替换为 "落地 IP"
   const content = `${SSID}${LAN}${media_content}\n` + 
             '—'.repeat(20) + '\n' +
-            `${PROXY_NAME}` +
+            `${PROXY_DISPLAY}` +
             `落地 IP: ${proxyData.ip}\n${proxyData.info}\n` +
             `直连 IP: ${directData.ip}` +
             `\n执行时间: ${new Date().toTimeString().split(' ')[0]}`
@@ -93,7 +97,7 @@ async function check_netflix() {
 
 async function testDisneyPlus() {
     return new Promise((res) => {
-        $httpClient.get({url: 'https://www.disneyplus.com/', headers: headers = REQUEST_HEADERS}, (e, r, d) => {
+        $httpClient.get({url: 'https://www.disneyplus.com/', headers: REQUEST_HEADERS}, (e, r, d) => {
             let m = d?.match(/Region: ([A-Za-z]{2})/)?.[1] || 'US'
             res(`Disney+: ${(!e && r.status==200) ? '已解锁 ➟ ' + m : '未支持 🚫'}`)
         })
