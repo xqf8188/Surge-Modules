@@ -18,7 +18,7 @@ let title = ''
 let content = ''
 
 !(async () => {
-  // 1. 基础网络信息查询逻辑 (保留原脚本逻辑)
+  // 1. 基础网络信息查询逻辑
   let SSID = '', LAN = '', LAN_IPv4 = '', LAN_IPv6 = ''
   if (typeof $network !== 'undefined') {
     const v4 = $.lodash_get($network, 'v4.primaryAddress')
@@ -27,7 +27,8 @@ let content = ''
     if (v4 && arg.LAN == 1) LAN_IPv4 = v4
     if (v6 && arg.LAN == 1 && arg.IPv6 == 1) LAN_IPv6 = v6
   }
-  if (LAN_IPv4 || LAN_IPv6) LAN = `LAN: ${LAN_IPv4} ${maskIP(LAN_IPv6)}`.trim() + '\n\n'
+  // 这里去掉了局域网 IP 的 mask
+  if (LAN_IPv4 || LAN_IPv6) LAN = `LAN: ${LAN_IPv4} ${LAN_IPv6}`.trim() + '\n\n'
 
   // 2. 并发执行：流媒体检测 + IP 信息检测
   $.log("开始同步检测流媒体与网络信息...")
@@ -36,8 +37,8 @@ let content = ''
     check_netflix(),
     check_chatgpt(),
     testDisneyPlus(),
-    getProxyInfo(undefined, arg.LANDING_IPv4), // 落地信息
-    getDirectInfo(undefined, arg.DOMESTIC_IPv4) // 直连信息
+    getProxyInfo(undefined, arg.LANDING_IPv4), 
+    getDirectInfo(undefined, arg.DOMESTIC_IPv4)
   ])
 
   // 3. 格式化流媒体部分
@@ -48,19 +49,18 @@ let content = ''
 
   const media_content = [yt, nf, gpt, disney_text].join('\n')
 
-  // 4. 格式化 IP 信息部分 (落地 IP / 运营商)
+  // 4. 格式化 IP 信息部分
   const PROXY_IP = proxyData.PROXY_IP || '-'
   const PROXY_INFO = proxyData.PROXY_INFO || ''
   const CN_IP = directData.CN_IP || '-'
   
-  // 5. 组装最终面板
+  // 5. 组装最终面板 (移除了所有 maskIP 调用)
   title = `网络信息 & 流媒体`
   
-  // 组装顺序：SSID/LAN -> 流媒体列表 -> 分割线 -> 代理/IP 详情
   content = `${SSID}${LAN}${media_content}\n` + 
             '—'.repeat(20) + '\n' +
-            `节点: ${maskIP(PROXY_IP)}\n${PROXY_INFO}\n` +
-            `直连: ${maskIP(CN_IP)}`
+            `节点: ${PROXY_IP}\n${PROXY_INFO}\n` +
+            `直连: ${CN_IP}`
 
   if (!isInteraction()) {
     content += `\n执行时间: ${new Date().toTimeString().split(' ')[0]}`
@@ -135,7 +135,7 @@ async function testDisneyPlus() {
     } catch (e) { return { status: 0, region: '' } }
 }
 
-// ================= 网络信息函数库 (精简自原脚本) =================
+// ================= 网络信息函数库 =================
 
 async function getProxyInfo(ip, provider) {
     return new Promise((resolve) => {
@@ -161,9 +161,9 @@ async function getDirectInfo(ip, provider) {
     })
 }
 
+// 已将此函数修改为直接返回，不做截断处理
 function maskIP(ip) {
-  if (!ip || ip === '-') return ip
-  return ip.split('.').slice(0, 2).join('.') + '.*.*'
+  return ip
 }
 
 function getflag(e) {
@@ -174,5 +174,4 @@ function getflag(e) {
 function isPanel() { return typeof $input != 'undefined' && $input.purpose === 'panel' }
 function isInteraction() { return false }
 
-// --- Env 环境 (保留部分核心逻辑以保持兼容性) ---
 function Env(t,e){class s{constructor(t){this.env=t}send(t,e="GET"){t="string"==typeof t?{url:t}:t;let s=this.get;return"POST"===e&&(s=this.post),new Promise((e,a)=>{s.call(this,t,(t,s,r)=>{t?a(t):e(s)})})}get(t){return this.send.call(this.env,t)}post(t){return this.send.call(this.env,t,"POST")}}return new class{constructor(t,e){this.name=t,this.http=new s(this),this.logs=[],this.startTime=(new Date).getTime(),Object.assign(this,e)}log(...t){console.log(t.join("\n"))}msg(e,s,a){$notification.post(e,s,a)}lodash_get(t,e,s){const a=e.replace(/\[(\d+)\]/g,".$1").split(".");let r=t;for(const t of a)if(r=Object(r)[t],void 0===r)return s;return r}done(t={}){$done(t)}}(t,e)}
