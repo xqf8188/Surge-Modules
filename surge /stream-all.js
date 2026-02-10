@@ -1,5 +1,5 @@
 /*
- * 整合脚本：网络信息 (全显 IP + 策略名版)
+ * 整合脚本：网络信息 (全显 IP + 策略名 + 落地IP版)
  * 支持：Surge, Loon, Stash
  */
 
@@ -42,11 +42,12 @@ const REQUEST_HEADERS = {
   const title = `网络信息 & 流媒体`
   const media_content = [yt, nf, gpt, disney].join('\n')
   
+  // 核心改动：这里将 "节点" 替换为 "落地 IP"
   const content = `${SSID}${LAN}${media_content}\n` + 
             '—'.repeat(20) + '\n' +
             `${PROXY_NAME}` +
-            `节点: ${proxyData.ip}\n${proxyData.info}\n` +
-            `直连: ${directData.ip}` +
+            `落地 IP: ${proxyData.ip}\n${proxyData.info}\n` +
+            `直连 IP: ${directData.ip}` +
             `\n执行时间: ${new Date().toTimeString().split(' ')[0]}`
 
   // 4. 最终输出
