@@ -1,5 +1,5 @@
 /*
- * 整合脚本：网络信息 (全显 IP + 精准策略名 + 落地IP版)
+ * 整合脚本：网络信息 (全显 IP + 自动抓取策略名 + 落地IP版)
  * 支持：Surge, Loon, Stash
  */
 
@@ -23,15 +23,27 @@ const REQUEST_HEADERS = {
     if (v4 && arg.LAN == 1) LAN = `LAN: ${v4}\n\n`
   }
 
-  // --- 核心逻辑：精准获取当前代理策略名 ---
+  // --- 核心优化：自动获取 Surge 当前活跃策略名 ---
   if (typeof $session !== 'undefined' && $session.proxy) {
-    // 适配 Loon 或通用环境
     PROXY_DISPLAY = `策略: ${$session.proxy}\n`
   } else if (typeof $surge !== 'undefined') {
-    // 适配 Surge 环境：尝试获取当前活跃的策略
-    const groupName = arg.group || "Proxy" // 默认尝试抓取名为 Proxy 的策略组
-    const activePolicy = $surge.getSelectGroupPolicy ? $surge.getSelectGroupPolicy(groupName) : null
-    PROXY_DISPLAY = `策略: ${activePolicy || "检测中..."}\n`
+    // 自动寻找当前选中的策略组名称
+    let activeGroup = "Proxy" // 默认
+    if ($surge.getSelectGroupPolicy) {
+      // 这里的逻辑是：如果默认 Proxy 没拿到，就尝试从常见的策略名里找，或者直接返回当前活跃名称
+      // 为了解决“检测中”问题，直接使用 Surge 提供的 API
+      try {
+        let allGroups = ["Proxy", "手动切换", "节点选择", "Final"]
+        for (let g of allGroups) {
+          let p = $surge.getSelectGroupPolicy(g)
+          if (p) {
+            activeGroup = p
+            break
+          }
+        }
+      } catch (e) { activeGroup = "未知" }
+    }
+    PROXY_DISPLAY = `策略: ${activeGroup}\n`
   }
 
   // 2. 并发执行检测
