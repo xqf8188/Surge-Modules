@@ -1,6 +1,6 @@
 /*
- * 整合脚本：网络信息 (全显 IP + 自动抓取策略名 + 落地IP版)
- * 支持：Surge, Loon, Stash
+ * 整合脚本：网络信息 (全显 IP + Surge 深度策略匹配 + 落地IP版)
+ * 支持：Surge (核心优化), Loon, Stash
  */
 
 const NAME = 'network-info-proxy-name'
@@ -14,49 +14,36 @@ const REQUEST_HEADERS = {
 }
 
 !(async () => {
-  // 1. 获取基础网络与策略信息
-  let SSID = '', LAN = '', PROXY_DISPLAY = ''
-  
+  // 1. 获取基础网络信息
+  let SSID = '', LAN = ''
   if (typeof $network !== 'undefined') {
     const v4 = $.lodash_get($network, 'v4.primaryAddress')
     if (arg.SSID == 1) SSID = `SSID: ${$.lodash_get($network, 'wifi.ssid')}\n\n`
     if (v4 && arg.LAN == 1) LAN = `LAN: ${v4}\n\n`
   }
 
-  // --- 核心优化：自动获取 Surge 当前活跃策略名 ---
-  if (typeof $session !== 'undefined' && $session.proxy) {
-    PROXY_DISPLAY = `策略: ${$session.proxy}\n`
-  } else if (typeof $surge !== 'undefined') {
-    // 自动寻找当前选中的策略组名称
-    let activeGroup = "Proxy" // 默认
-    if ($surge.getSelectGroupPolicy) {
-      // 这里的逻辑是：如果默认 Proxy 没拿到，就尝试从常见的策略名里找，或者直接返回当前活跃名称
-      // 为了解决“检测中”问题，直接使用 Surge 提供的 API
-      try {
-        let allGroups = ["Proxy", "手动切换", "节点选择", "Final"]
-        for (let g of allGroups) {
-          let p = $surge.getSelectGroupPolicy(g)
-          if (p) {
-            activeGroup = p
-            break
-          }
-        }
-      } catch (e) { activeGroup = "未知" }
-    }
-    PROXY_DISPLAY = `策略: ${activeGroup}\n`
-  }
-
-  // 2. 并发执行检测
-  const [yt, nf, gpt, disney, proxyData, directData] = await Promise.all([
+  // 2. 并发执行检测（注意：这里增加了策略回溯）
+  const [yt, nf, gpt, disney, proxyData, directData, surgePolicy] = await Promise.all([
     check_youtube_premium(),
     check_netflix(),
     check_chatgpt(),
     testDisneyPlus(),
     getProxyInfo(), 
-    getDirectInfo()
+    getDirectInfo(),
+    getSurgeActivePolicy() // 提取自第二个脚本的 Surge 专用逻辑
   ])
 
-  // 3. 组装内容
+  // 3. 确定最终显示的策略名
+  let PROXY_DISPLAY = ''
+  if (surgePolicy) {
+    PROXY_DISPLAY = `策略: ${surgePolicy}\n`
+  } else if (typeof $session !== 'undefined' && $session.proxy) {
+    PROXY_DISPLAY = `策略: ${$session.proxy}\n`
+  } else {
+    PROXY_DISPLAY = `策略: 默认/直连\n`
+  }
+
+  // 4. 组装内容
   const title = `网络信息 & 流媒体`
   const media_content = [yt, nf, gpt, disney].join('\n')
   
@@ -67,7 +54,7 @@ const REQUEST_HEADERS = {
             `直连 IP: ${directData.ip}` +
             `\n执行时间: ${new Date().toTimeString().split(' ')[0]}`
 
-  // 4. 最终输出
+  // 5. 最终输出
   if (typeof $input != 'undefined' && $input.purpose === 'panel') {
     $done({ title, content, icon: "network", "icon-color": "#5AC8FA" })
   } else {
@@ -76,7 +63,36 @@ const REQUEST_HEADERS = {
   }
 })().catch(e => { $.logErr(e); $.done() })
 
-// ================= 函数库 =================
+// ================= 核心：从第二个脚本提取的策略回溯函数 =================
+
+async function getSurgeActivePolicy() {
+  if (typeof $surge === 'undefined') return null;
+  
+  // 这里的正则匹配常用的 IP 检测地址，确保能回溯到最近一次查询 IP 用的策略
+  const regexp = /ip-api\.com|ipinfo\.io|api-ipv4\.ip\.sb|ipwhois\.app/
+  
+  return new Promise((resolve) => {
+    $httpAPI("GET", "/v1/requests/recent", null, (data) => {
+      try {
+        const requests = data.requests;
+        // 寻找最近一个匹配 IP 检测域名的请求记录
+        const request = requests.slice(0, 15).find(i => regexp.test(i.URL));
+        if (request && request.policyName) {
+          resolve(request.policyName);
+        } else {
+          // 如果没找到请求记录，尝试获取名为 Proxy 的组（兼容逻辑）
+          let group = arg.group || "Proxy";
+          let p = $surge.getSelectGroupPolicy ? $surge.getSelectGroupPolicy(group) : null;
+          resolve(p);
+        }
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  });
+}
+
+// ================= 检测函数库 =================
 
 async function check_chatgpt() {
     return new Promise((resolve) => {
