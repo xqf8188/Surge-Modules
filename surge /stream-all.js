@@ -105,7 +105,7 @@ async function getProxyInfo() {
             if (err) return res({ ip: '-', info: '' })
             let obj = JSON.parse(data)
             let flag = obj.countryCode.toUpperCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397))
-            res({ 落地ip: obj.query, info: `位置: ${flag} ${obj.country} ${obj.regionName}\n运营商: ${obj.isp}` })
+            res({ ip: obj.query, info: `位置: ${flag} ${obj.country} ${obj.regionName}\n运营商: ${obj.isp}` })
         })
     })
 }
