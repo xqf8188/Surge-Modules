@@ -1,9 +1,9 @@
 /*
- * 整合脚本：网络信息 (完全显示 IP 版)
- * 支持：Surge, Quantumult X, Loon, Stash
+ * 整合脚本：网络信息 (全显 IP + 策略名版)
+ * 支持：Surge, Loon, Stash
  */
 
-const NAME = 'network-info-full-ip'
+const NAME = 'network-info-proxy-name'
 const $ = new Env(NAME)
 
 // --- 参数初始化 ---
@@ -14,12 +14,18 @@ const REQUEST_HEADERS = {
 }
 
 !(async () => {
-  // 1. 基础网络信息
-  let SSID = '', LAN = ''
+  // 1. 获取基础网络与策略信息
+  let SSID = '', LAN = '', PROXY_NAME = ''
+  
   if (typeof $network !== 'undefined') {
     const v4 = $.lodash_get($network, 'v4.primaryAddress')
     if (arg.SSID == 1) SSID = `SSID: ${$.lodash_get($network, 'wifi.ssid')}\n\n`
     if (v4 && arg.LAN == 1) LAN = `LAN: ${v4}\n\n`
+  }
+
+  // 获取当前选中的策略名 (Surge/Loon 支持)
+  if (typeof $session !== 'undefined' && $session.proxy) {
+    PROXY_NAME = `策略: ${$session.proxy}\n`
   }
 
   // 2. 并发执行检测
@@ -32,12 +38,13 @@ const REQUEST_HEADERS = {
     getDirectInfo()
   ])
 
-  // 3. 组装内容 (强制不使用任何脱敏函数)
+  // 3. 组装内容
   const title = `网络信息 & 流媒体`
   const media_content = [yt, nf, gpt, disney].join('\n')
   
   const content = `${SSID}${LAN}${media_content}\n` + 
             '—'.repeat(20) + '\n' +
+            `${PROXY_NAME}` +
             `节点: ${proxyData.ip}\n${proxyData.info}\n` +
             `直连: ${directData.ip}` +
             `\n执行时间: ${new Date().toTimeString().split(' ')[0]}`
@@ -85,7 +92,7 @@ async function check_netflix() {
 
 async function testDisneyPlus() {
     return new Promise((res) => {
-        $httpClient.get({url: 'https://www.disneyplus.com/', headers: REQUEST_HEADERS}, (e, r, d) => {
+        $httpClient.get({url: 'https://www.disneyplus.com/', headers: headers = REQUEST_HEADERS}, (e, r, d) => {
             let m = d?.match(/Region: ([A-Za-z]{2})/)?.[1] || 'US'
             res(`Disney+: ${(!e && r.status==200) ? '已解锁 ➟ ' + m : '未支持 🚫'}`)
         })
