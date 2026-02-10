@@ -2,9 +2,8 @@
  * 由@LucaLin233编写
  * 原脚本地址：https://raw.githubusercontent.com/LucaLin233/Luca_Conf/main/Surge/JS/stream-all.js
  * 由@Rabbit-Spec修改
- * 增加 ChatGPT 检测支持
  * 更新日期：2024.06.01
- * 版本：3.2
+ * 版本：3.3 (优化 ChatGPT 地区显示)
  */
 
 const REQUEST_HEADERS = {
@@ -13,7 +12,6 @@ const REQUEST_HEADERS = {
     'Accept-Language': 'en',
 }
 
-// 状态常量
 const STATUS_COMING = 2
 const STATUS_AVAILABLE = 1
 const STATUS_NOT_AVAILABLE = 0
@@ -30,23 +28,20 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
       'icon-color': '#FF2D55',
     }
     
-    // 同时运行 Disney+ 和其他流媒体检测
     let [{ region, status }] = await Promise.all([testDisneyPlus()])
     
-    // 在这里添加了 check_chatgpt()
+    // 并发检测 YT, Netflix, ChatGPT
     await Promise.all([check_youtube_premium(), check_netflix(), check_chatgpt()])
       .then((result) => { 
         let disney_result = ""
         if (status == STATUS_COMING) {
-            disney_result = "Disney+: 即将登陆~" + region.toUpperCase()
+            disney_result = "Disney+: 即将登陆 ➟ " + region.toUpperCase()
         } else if (status == STATUS_AVAILABLE) {
             disney_result = "Disney+: 已解锁 ➟ " + region.toUpperCase()
         } else if (status == STATUS_NOT_AVAILABLE) {
-            disney_result = "Disney+: 未支持 🚫 "
+            disney_result = "Disney+: 未支持 🚫"
         } else if (status == STATUS_TIMEOUT) {
             disney_result = "Disney+: 检测超时 🚦"
-        } else {
-            disney_result = "Disney+: 检测失败 🛠️"
         }
 
         result.push(disney_result)
@@ -58,12 +53,12 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
       })
 })()
 
-// --- ChatGPT 检测函数 ---
+// --- 优化后的 ChatGPT 检测 (支持显示地区代码) ---
 async function check_chatgpt() {
     let inner_check = () => {
         return new Promise((resolve, reject) => {
             let option = {
-                url: 'https://ios.chat.openai.com/public-api/mobile/server_status/v1',
+                url: 'https://chat.openai.com/cdn-cgi/trace',
                 headers: REQUEST_HEADERS,
             }
             $httpClient.get(option, function (error, response, data) {
@@ -71,25 +66,39 @@ async function check_chatgpt() {
                     reject('Error')
                     return
                 }
-                if (response.status === 200) {
-                    // 也可以通过检查 CF-Ray 响应头获取更准确的地区，这里简化处理
-                    resolve('Available')
-                } else if (response.status === 403) {
-                    resolve('Not Available')
-                } else {
-                    reject('Error')
+                // 解析 Cloudflare trace 信息获取地区
+                let lines = data.split('\n')
+                let kv = {}
+                lines.forEach(line => {
+                    let parts = line.split('=')
+                    if (parts[1]) kv[parts[0]] = parts[1]
+                })
+                
+                let region = kv['loc'] ? kv['loc'].toUpperCase() : ''
+                
+                // 再次验证是否真的允许访问
+                let check_url = {
+                    url: 'https://ios.chat.openai.com/public-api/mobile/server_status/v1',
+                    headers: REQUEST_HEADERS,
                 }
+                $httpClient.get(check_url, function (err, res, dat) {
+                    if (res && res.status === 200) {
+                        resolve(region || 'YES')
+                    } else {
+                        resolve('Not Available')
+                    }
+                })
             })
         })
     }
 
     let res = 'ChatGPT: '
     await inner_check()
-        .then((status) => {
-            if (status === 'Available') {
-                res += '已解锁 ➟ 支持'
-            } else {
+        .then((code) => {
+            if (code === 'Not Available') {
                 res += '不支持解锁 🚫'
+            } else {
+                res += '已解锁 ➟ ' + code
             }
         })
         .catch(() => {
@@ -98,7 +107,7 @@ async function check_chatgpt() {
     return res
 }
 
-// --- 原有 YouTube 检测 ---
+// --- 其余函数保持不变 ---
 async function check_youtube_premium() {
     let inner_check = () => {
       return new Promise((resolve, reject) => {
@@ -108,116 +117,66 @@ async function check_youtube_premium() {
         }
         $httpClient.get(option, function (error, response, data) {
           if (error != null || response.status !== 200) {
-            reject('Error')
-            return
+            reject('Error'); return
           }
           if (data.indexOf('Premium is not available in your country') !== -1) {
-            resolve('Not Available')
-            return
+            resolve('Not Available'); return
           }
-          let region = ''
           let re = new RegExp('"countryCode":"(.*?)"', 'gm')
           let result = re.exec(data)
-          if (result != null && result.length === 2) {
-            region = result[1]
-          } else if (data.indexOf('www.google.cn') !== -1) {
-            region = 'CN'
-          } else {
-            region = 'US'
-          }
+          let region = (result && result.length === 2) ? result[1] : (data.indexOf('www.google.cn') !== -1 ? 'CN' : 'US')
           resolve(region)
         })
       })
     }
-    let youtube_check_result = 'YouTube: '
-    await inner_check()
-      .then((code) => {
-        if (code === 'Not Available') {
-          youtube_check_result += '不支持解锁'
-        } else {
-          youtube_check_result += '已解锁 ➟ ' + code.toUpperCase()
-        }
-      })
-      .catch((error) => {
-        youtube_check_result += '检测失败，请刷新面板'
-      })
-    return youtube_check_result
+    let res = 'YouTube: '
+    await inner_check().then(code => {
+        res += (code === 'Not Available' ? '不支持解锁' : '已解锁 ➟ ' + code.toUpperCase())
+    }).catch(() => { res += '检测失败' })
+    return res
 }
 
-// --- 原有 Netflix 检测 ---
 async function check_netflix() {
     let inner_check = (filmId) => {
       return new Promise((resolve, reject) => {
-        let option = {
-          url: 'https://www.netflix.com/title/' + filmId,
-          headers: REQUEST_HEADERS,
-        }
+        let option = { url: 'https://www.netflix.com/title/' + filmId, headers: REQUEST_HEADERS }
         $httpClient.get(option, function (error, response, data) {
-          if (error != null) {
-            reject('Error')
-            return
-          }
-          if (response.status === 403) {
-            reject('Not Available')
-            return
-          }
-          if (response.status === 404) {
-            resolve('Not Found')
-            return
-          }
+          if (error != null) { reject('Error'); return }
+          if (response.status === 403) { reject('Not Available'); return }
+          if (response.status === 404) { resolve('Not Found'); return }
           if (response.status === 200) {
-            let url = response.headers['x-originating-url'] || response.headers['Location'] || ''
-            let region = 'US' 
-            if (url.includes('/')) {
-                region = url.split('/')[3].split('-')[0]
-                if (region === 'title') region = 'US'
-            }
-            resolve(region)
+            let url = response.headers['x-originating-url'] || ''
+            let region = url.split('/')[3] ? url.split('/')[3].split('-')[0] : 'US'
+            resolve(region === 'title' ? 'US' : region)
             return
           }
           reject('Error')
         })
       })
     }
-    let netflix_check_result = 'Netflix: '
+    let res = 'Netflix: '
     await inner_check(81280792)
-      .then((code) => {
-        if (code === 'Not Found') return inner_check(80018499)
-        netflix_check_result += '已完整解锁 ➟ ' + code.toUpperCase()
-        return Promise.reject('BreakSignal')
+      .then(code => {
+          if (code === 'Not Found') return inner_check(80018499).then(c => {
+              if (c === 'Not Found') throw 'Not Available'
+              res += '仅解锁自制剧 ➟ ' + c.toUpperCase()
+          })
+          res += '已完整解锁 ➟ ' + code.toUpperCase()
       })
-      .then((code) => {
-        if (code === 'Not Found') return Promise.reject('Not Available')
-        netflix_check_result += '仅解锁自制剧 ➟ ' + code.toUpperCase()
-        return Promise.reject('BreakSignal')
-      })
-      .catch((error) => {
-        if (error === 'BreakSignal') return
-        if (error === 'Not Available') {
-          netflix_check_result += '该节点不支持解锁'
-          return
-        }
-        netflix_check_result += '检测失败'
-      })
-    return netflix_check_result
+      .catch(err => { res += (err === 'Not Available' ? '该节点不支持解锁' : '检测失败') })
+    return res
 }
 
-// --- 原有 Disney+ 检测函数 (保持不变) ---
 async function testDisneyPlus() {
     try {
         let { region, cnbl } = await Promise.race([testHomePage(), timeout(7000)])
         let { countryCode, inSupportedLocation } = await Promise.race([getLocationInfo(), timeout(7000)])
         region = countryCode ?? region
-        if (inSupportedLocation === false || inSupportedLocation === 'false') {
-          return { region, status: STATUS_COMING }
-        } else {
-          return { region, status: STATUS_AVAILABLE }
-        }
-      } catch (error) {
-        if (error === 'Not Available') return { status: STATUS_NOT_AVAILABLE }
-        if (error === 'Timeout') return { status: STATUS_TIMEOUT }
-        return { status: STATUS_ERROR }
-      } 
+        return { region, status: (inSupportedLocation === false || inSupportedLocation === 'false') ? STATUS_COMING : STATUS_AVAILABLE }
+    } catch (e) {
+        if (e === 'Not Available') return { status: STATUS_NOT_AVAILABLE }
+        return { status: STATUS_TIMEOUT }
+    }
 }
 
 function getLocationInfo() {
@@ -251,50 +210,28 @@ function getLocationInfo() {
                 },
             }),
         }
-        $httpClient.post(opts, function (error, response, data) {
-            if (error || response.status !== 200) {
-                reject('Not Available')
-                return
-            }
-            data = JSON.parse(data)
-            if(data?.errors) {
-                reject('Not Available')
-                return
-            }
-            let {
-                session: {
-                    inSupportedLocation,
-                    location: { countryCode },
-                },
-            } = data?.extensions?.sdk
-            resolve({ inSupportedLocation, countryCode })
+        $httpClient.post(opts, (error, response, data) => {
+            if (error || response.status !== 200) { reject('Not Available'); return }
+            let res = JSON.parse(data)
+            if(res?.errors) { reject('Not Available'); return }
+            resolve({ 
+                inSupportedLocation: res.extensions.sdk.session.inSupportedLocation, 
+                countryCode: res.extensions.sdk.session.location.countryCode 
+            })
         })
     })
 }
 
 function testHomePage() {
     return new Promise((resolve, reject) => {
-        let opts = {
-            url: 'https://www.disneyplus.com/',
-            headers: { 'Accept-Language': 'en', 'User-Agent': UA },
-        }
-        $httpClient.get(opts, function (error, response, data) {
-            if (error || response.status !== 200 || data.indexOf('not available in your region') !== -1) {
-                reject('Not Available')
-                return
-            }
-            let match = data.match(/Region: ([A-Za-z]{2})[\s\S]*?CNBL: ([12])/)
-            if (!match) {
-                resolve({ region: '', cnbl: '' })
-                return
-            }
-            resolve({ region: match[1], cnbl: match[2] })
+        $httpClient.get({ url: 'https://www.disneyplus.com/', headers: { 'Accept-Language': 'en', 'User-Agent': UA } }, (error, response, data) => {
+            if (error || response.status !== 200 || data.indexOf('not available') !== -1) { reject('Not Available'); return }
+            let match = data.match(/Region: ([A-Za-z]{2})/)
+            resolve({ region: match ? match[1] : '' })
         })
     })
 }
 
 function timeout(delay = 5000) {
-    return new Promise((resolve, reject) => {
-        setTimeout(() => { reject('Timeout') }, delay)
-    })
+    return new Promise((_, reject) => { setTimeout(() => { reject('Timeout') }, delay) })
 }
