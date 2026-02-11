@@ -1,6 +1,6 @@
 /*
-Surge 万能抓视频脚本 V5.3 (精简存储版)
-功能：性能过滤、路径永久去重、单次进入锁定、存储只保留 5 条、5 分钟自动清理
+Surge 万能抓视频脚本 V5.4 (动态重复抓取版)
+功能：性能过滤、存储限2条、1分钟自动清理、支持同视频重进抓取（基于实时存储判断）
 */
 
 const url = $request.url;
@@ -12,13 +12,11 @@ const contentType = isResponse ? ($response.headers['Content-Type'] || $response
 // 持久化储存配置
 // =====================
 const HISTORY_KEY = "VideoCatch_History";
-const NOTIFIED_LIST_KEY = "VideoCatch_NotifiedPathList"; 
 const LOCK_TIME_KEY = "VideoCatch_ActionLock";
-const MAX_HISTORY = 2;       // 核心改动：历史记录只保留 5 个
-const EXPIRE_MINUTES = 1;    // 5 分钟后自动判定为过期
+const MAX_HISTORY = 2;       // 存储只保留 2 个
+const EXPIRE_MINUTES = 1;    // 1 分钟后自动删除
 
 let history = JSON.parse($persistentStore.read(HISTORY_KEY) || "[]");
-let notifiedPaths = JSON.parse($persistentStore.read(NOTIFIED_LIST_KEY) || "[]");
 
 function log(msg) { console.log("🎬 [VideoCatch] " + msg); }
 
@@ -33,39 +31,34 @@ function processVideo(title, videoUrl) {
 
     let now = Date.now();
 
-    // --- 逻辑 A：自动清理过期历史 (5分钟) ---
+    // --- 逻辑 A：自动清理过期历史 (1分钟) ---
     let beforeCount = history.length;
     history = history.filter(item => {
         if (!item.timestamp) return true;
-        return (now - item.timestamp) < (EXPIRE_MINUTES * 60 * 1000);
+        return (now - item.timestamp) < (EXPIRE_MINUTES * 60 * 1000); //
     });
     if (history.length < beforeCount) {
-        log(`🧹 自动清理：已删除过期的历史记录`);
+        log(`🧹 自动清理：已删除 1 分钟前的过期记录`);
     }
 
-    // --- 逻辑 B：单次操作锁定 (10秒内只允许抓一个) ---
+    // --- 逻辑 B：单次操作锁定 (5秒内防止连跳) ---
     let lastLockTime = parseInt($persistentStore.read(LOCK_TIME_KEY) || "0");
-    if (now - lastLockTime < 10000) {
+    if (now - lastLockTime < 5000) {
         return;
     }
 
-    // --- 逻辑 C：路径级永久去重 (同视频只抓一次) ---
-    let cleanUrl = videoUrl.split('?')[0];
-    if (notifiedPaths.includes(cleanUrl)) {
-        log("🚫 该视频已抓取过，不再通知");
+    // --- 逻辑 C：存储查重判断 (核心需求) ---
+    // 判断当前存储里是否已经有了完全一样的链接
+    let isExist = history.some(item => item.url === videoUrl); //
+    if (isExist) {
+        log("🚫 存储中已存在相同链接，跳过通知");
         return;
     }
 
-    // 更新状态
+    // 更新锁定时间
     $persistentStore.write(now.toString(), LOCK_TIME_KEY);
-    notifiedPaths.push(cleanUrl);
-    if (notifiedPaths.length > 500) notifiedPaths.shift();
-    $persistentStore.write(JSON.stringify(notifiedPaths), NOTIFIED_LIST_KEY);
 
-    // 2. 保存历史记录 (强制只保留最近 5 条)
-    let index = history.findIndex(item => item.url === videoUrl);
-    if (index !== -1) history.splice(index, 1);
-    
+    // 2. 保存历史记录 (强制只保留最近 2 条)
     history.unshift({
         title: title,
         url: videoUrl,
@@ -73,9 +66,8 @@ function processVideo(title, videoUrl) {
         timestamp: now 
     });
 
-    // 强制截取前 5 条
     if (history.length > MAX_HISTORY) {
-        history = history.slice(0, MAX_HISTORY);
+        history = history.slice(0, MAX_HISTORY); // 保持 2 条
     }
     $persistentStore.write(JSON.stringify(history), HISTORY_KEY);
 
@@ -83,15 +75,15 @@ function processVideo(title, videoUrl) {
     let vlcUrl = videoUrl.replace(/^http/, "vlc");
     $notification.post(
       title,
-      "✅ 捕获成功 | 历史仅留5条 | 5分后清理",
-      videoUrl,
+      "✅ 捕获成功 | 存2条 | 1分后清理",
+      `链接若从历史消失，重进视频可再次抓取\n${videoUrl}`,
       { 
         "url": vlcUrl, 
         "open-url": vlcUrl, 
         "copy-output": videoUrl 
       }
     );
-    log(`✅ 成功抓取：${videoUrl}`);
+    log(`✅ 成功抓取新链接：${videoUrl}`);
 }
 
 // =====================
