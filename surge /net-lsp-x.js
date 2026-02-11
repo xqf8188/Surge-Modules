@@ -1,43 +1,48 @@
 /*
- * 网络信息 𝕏 - Surge 完美版
- * 100% 兼容 Surge 5.0+，支持多接口容错 + 流媒体检测
+ * 网络信息 𝕏 - Surge 完美修复版
+ * 解决面板不显示、通知正常的问题
  */
 
 const $ = new Env("网络信息 𝕏");
 
 !(async () => {
-  $.log("开始查询网络信息...");
+  $.log("开始查询...");
 
-  // 1. 获取网络基础信息 (SSID & LAN)
-  let networkHeader = "";
-  const v4 = $network.v4.primaryAddress;
-  const ssid = $network.wifi.ssid;
-  if (ssid) networkHeader += `SSID: ${ssid}\n`;
-  if (v4) networkHeader += `LAN: ${v4}\n`;
-  if (networkHeader) networkHeader += "\n";
-
-  // 2. 并行查询任务 (设置 5 秒超时，防止卡死)
+  // 1. 获取网络基础信息
+  let ssid = $network.wifi.ssid || "";
+  let v4 = $network.v4.primaryAddress || "";
+  
+  // 2. 并行查询
   let [direct, proxy, media] = await Promise.all([
     getDirectInfo(),
     getProxyInfo(),
     checkMedia()
   ]);
 
-  // 3. 组装内容
-  const content = `${networkHeader}直连 IP: ${mask(direct.ip)}\n📍 ${direct.info}\n\n落地 IP: ${mask(proxy.ip)}\n📍 ${proxy.info}\n\n---------- 流媒体检测 ----------\n${media.join("\n")}`;
+  // 3. 组装面板显示内容 (针对面板优化，去除冗余)
+  let panelContent = `直连: ${mask(direct.ip)} | ${direct.info}\n`;
+  panelContent += `落地: ${mask(proxy.ip)} | ${proxy.info}\n`;
+  panelContent += `YouTube: ${media[0]} | Netflix: ${media[1]} | GPT: ${media[2]}`;
 
-  // 4. 判断运行环境输出
+  // 4. 组装通知显示内容
+  let notifyContent = `SSID: ${ssid}  LAN: ${v4}\n\n`;
+  notifyContent += `直连 IP: ${mask(direct.ip)} (${direct.info})\n`;
+  notifyContent += `落地 IP: ${mask(proxy.ip)} (${proxy.info})\n\n`;
+  notifyContent += `---------- 流媒体检测 ----------\n`;
+  notifyContent += `YouTube: ${media[0]}\nNetflix: ${media[1]}\nChatGPT: ${media[2]}`;
+
+  // 5. 核心：根据不同环境返回数据
   if (typeof $panel !== "undefined") {
-    // 渲染面板模式
+    // 【修正】Surge 面板专用返回格式
     $.done({
-      title: "网络信息 𝕏",
-      content: content,
+      title: ssid ? `网络: ${ssid}` : "网络信息 𝕏",
+      content: panelContent,
       icon: "network",
-      "icon-color": "#007AFF"
+      "icon-color": "#5AC8FA"
     });
   } else {
-    // 弹窗或普通模式
-    $.msg("网络信息 𝕏", proxy.info, content);
+    // 普通运行模式弹出通知
+    $.msg("网络信息 𝕏", `落地: ${proxy.info}`, notifyContent);
     $.done();
   }
 })().catch(e => {
@@ -45,55 +50,38 @@ const $ = new Env("网络信息 𝕏");
   $.done();
 });
 
-// ======= [功能模块 1: 直连 IP 查询] =======
+// ======= [功能模块] =======
+
 async function getDirectInfo() {
-  const providers = [
-    { url: "https://httpbin.org/ip", parse: b => JSON.parse(b).origin.split(',')[0] },
-    { url: "https://forge.speedtest.cn/api/location/info", parse: b => JSON.parse(b).ip }
-  ];
-  for (let p of providers) {
-    try {
-      let res = await httpGet(p.url);
-      let ip = p.parse(res.body);
-      if (ip) return { ip, info: "中国 运营商网络" };
-    } catch (e) {}
-  }
-  return { ip: "未知", info: "直连查询超时" };
+  try {
+    let res = await httpGet("https://httpbin.org/ip");
+    return { ip: JSON.parse(res.body).origin.split(',')[0], info: "直连" };
+  } catch (e) { return { ip: "未知", info: "超时" }; }
 }
 
-// ======= [功能模块 2: 落地 IP 查询] =======
 async function getProxyInfo() {
   try {
-    // Surge 会根据策略组自动选择出口
     let res = await httpGet("http://ip-api.com/json/?lang=zh-CN");
     let data = JSON.parse(res.body);
-    return { ip: data.query, info: `${data.country} ${data.city}` };
-  } catch (e) {
-    return { ip: "未知", info: "代理查询超时" };
-  }
+    return { ip: data.query, info: data.country };
+  } catch (e) { return { ip: "未知", info: "超时" }; }
 }
 
-// ======= [功能模块 3: 流媒体检测] =======
 async function checkMedia() {
   const list = [
-    { name: "YouTube", url: "https://www.youtube.com/premium", key: "Premium" },
-    { name: "Netflix", url: "https://www.netflix.com/title/81215561", key: "Netflix" },
-    { name: "ChatGPT", url: "https://ios.chat.openai.com/public-api/mobile/server_status", key: "200" }
+    { url: "https://www.youtube.com/premium", key: "Premium" },
+    { url: "https://www.netflix.com/title/81215561", key: "Netflix" },
+    { url: "https://ios.chat.openai.com/public-api/mobile/server_status", key: "200" }
   ];
   return await Promise.all(list.map(item => {
     return new Promise(resolve => {
       $.http.get({ url: item.url, timeout: 3000 }, (err, resp, data) => {
-        if (!err && data && data.includes(item.key)) {
-          resolve(`✅ ${item.name}: 已解锁`);
-        } else {
-          resolve(`❌ ${item.name}: 未解锁`);
-        }
+        resolve(!err && data && data.includes(item.key) ? "✅" : "❌");
       });
     });
   }));
 }
 
-// ======= [工具函数] =======
 function mask(ip) {
   if (!ip || ip === "未知") return ip;
   return ip.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, "$1.$2.*.*");
@@ -107,12 +95,11 @@ function httpGet(url) {
   });
 }
 
-// ======= [Surge 兼容环境 Env] =======
 function Env(name) {
   this.name = name;
   this.http = $httpClient;
   this.msg = (t, s, m) => $notification.post(t, s, m);
-  this.log = (m) => console.log(`[${this.name}] ${m}`);
-  this.logErr = (e) => console.log(`[${this.name}] ERROR: ${e}`);
+  this.log = (m) => console.log(m);
+  this.logErr = (e) => console.log(e);
   this.done = (o) => $done(o);
 }
