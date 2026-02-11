@@ -14,8 +14,8 @@ const contentType = isResponse ? ($response.headers['Content-Type'] || $response
 const HISTORY_KEY = "VideoCatch_History";
 const NOTIFIED_LIST_KEY = "VideoCatch_NotifiedPathList"; 
 const LOCK_TIME_KEY = "VideoCatch_ActionLock";
-const MAX_HISTORY = 5;       // 核心改动：历史记录只保留 5 个
-const EXPIRE_MINUTES = 5;    // 5 分钟后自动判定为过期
+const MAX_HISTORY = 2;       // 核心改动：历史记录只保留 5 个
+const EXPIRE_MINUTES = 1;    // 5 分钟后自动判定为过期
 
 let history = JSON.parse($persistentStore.read(HISTORY_KEY) || "[]");
 let notifiedPaths = JSON.parse($persistentStore.read(NOTIFIED_LIST_KEY) || "[]");
