@@ -30,7 +30,7 @@ function processVideo(title, videoUrl) {
     let lastActionTime = parseInt($persistentStore.read(GLOBAL_COOLDOWN_KEY) || "0");
     let now = Date.now();
 
-    if (now - lastActionTime < 15000) {
+    if (now - lastActionTime < 15000000000000000000) {
         log("🚫 全局冷却中：5秒内已发送过通知，本次拦截");
         return;
     }
