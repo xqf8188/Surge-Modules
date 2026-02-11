@@ -7,7 +7,7 @@
 
 [Script]
 # 将 script-path 替换为你刚刚复制的 Raw 链接
-NetworkPanel = type=generic, script-path=https://raw.githubusercontent.com/你的用户名/Surge-Scripts/main/network-info.js, argument=SSID=1&MASK=1&ORG=1
+NetworkPanel = type=generic, script-path=https://raw.githubusercontent.com/xqf8188/Surge-Modules/refs/heads/main/surge%20/network-info.js, argument=SSID=1&MASK=1&ORG=1
 
 [Panel]
 # 面板部分保持不变
