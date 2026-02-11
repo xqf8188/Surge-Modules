@@ -1,6 +1,6 @@
 /*
-Surge 万能抓视频脚本 V5.4 (动态重复抓取版)
-功能：性能过滤、存储限2条、1分钟自动清理、支持同视频重进抓取（基于实时存储判断）
+Surge 万能抓视频脚本 V5.5 (VLC 跳转修复版)
+功能：性能过滤、存储限2条、1分钟清理、跳转增强
 */
 
 const url = $request.url;
@@ -13,8 +13,8 @@ const contentType = isResponse ? ($response.headers['Content-Type'] || $response
 // =====================
 const HISTORY_KEY = "VideoCatch_History";
 const LOCK_TIME_KEY = "VideoCatch_ActionLock";
-const MAX_HISTORY = 2;       // 存储只保留 2 个
-const EXPIRE_MINUTES = 1;    // 1 分钟后自动删除
+const MAX_HISTORY = 2;       
+const EXPIRE_MINUTES = 1;    
 
 let history = JSON.parse($persistentStore.read(HISTORY_KEY) || "[]");
 
@@ -31,81 +31,70 @@ function processVideo(title, videoUrl) {
 
     let now = Date.now();
 
-    // --- 逻辑 A：自动清理过期历史 (1分钟) ---
-    let beforeCount = history.length;
+    // --- 逻辑 A：自动清理过期历史 ---
     history = history.filter(item => {
-        if (!item.timestamp) return true;
-        return (now - item.timestamp) < (EXPIRE_MINUTES * 60 * 1000); //
+        return (now - (item.timestamp || 0)) < (EXPIRE_MINUTES * 60 * 1000);
     });
-    if (history.length < beforeCount) {
-        log(`🧹 自动清理：已删除 1 分钟前的过期记录`);
-    }
 
-    // --- 逻辑 B：单次操作锁定 (5秒内防止连跳) ---
+    // --- 逻辑 B：单次操作锁定 (5秒) ---
     let lastLockTime = parseInt($persistentStore.read(LOCK_TIME_KEY) || "0");
-    if (now - lastLockTime < 5000) {
-        return;
-    }
+    if (now - lastLockTime < 5000) return;
 
-    // --- 逻辑 C：存储查重判断 (核心需求) ---
-    // 判断当前存储里是否已经有了完全一样的链接
-    let isExist = history.some(item => item.url === videoUrl); //
+    // --- 逻辑 C：重复性判断 ---
+    let isExist = history.some(item => item.url === videoUrl);
     if (isExist) {
         log("🚫 存储中已存在相同链接，跳过通知");
         return;
     }
 
-    // 更新锁定时间
+    // 更新锁定与存储
     $persistentStore.write(now.toString(), LOCK_TIME_KEY);
-
-    // 2. 保存历史记录 (强制只保留最近 2 条)
     history.unshift({
         title: title,
         url: videoUrl,
         time: new Date().toLocaleString('zh-CN', { hour12: false }),
         timestamp: now 
     });
-
-    if (history.length > MAX_HISTORY) {
-        history = history.slice(0, MAX_HISTORY); // 保持 2 条
-    }
+    if (history.length > MAX_HISTORY) history = history.slice(0, MAX_HISTORY);
     $persistentStore.write(JSON.stringify(history), HISTORY_KEY);
 
-    // 3. 发送通知
-    let vlcUrl = videoUrl.replace(/^http/, "vlc");
+    // =====================
+    // 🚀 跳转修复核心
+    // =====================
+    // 1. 尝试使用 x-callback 协议（这是 iOS 上最稳定的唤起方式）
+    let encodedUrl = encodeURIComponent(videoUrl);
+    let vlcUrl = "vlc-x-callback://x-callback-url/stream?url=" + encodedUrl;
+    
+    // 2. 备用传统协议（如果 A 不行，Surge 也会尝试触发）
+    // let backupVlcUrl = "vlc://" + encodedUrl;
+
     $notification.post(
       title,
-      "✅ 捕获成功 | 存2条 | 1分后清理",
-      `链接若从历史消失，重进视频可再次抓取\n${videoUrl}`,
+      "点击立即跳转 VLC 播放",
+      `1分钟后自动清理记录\n${videoUrl}`,
       { 
-        "url": vlcUrl, 
-        "open-url": vlcUrl, 
+        "open-url": vlcUrl,    // Surge 5.x 推荐字段
+        "url": vlcUrl,         // 兼容旧版字段
         "copy-output": videoUrl 
       }
     );
-    log(`✅ 成功抓取新链接：${videoUrl}`);
+    log(`✅ 捕获成功并尝试跳转: ${videoUrl}`);
 }
 
 // =====================
-// 性能过滤器
+// 逻辑触发器
 // =====================
 if (url.match(/\.(png|jpg|jpeg|gif|webp|zip|gz|woff|ttf|css|js|svg)/i)) {
     $done({});
 }
 
-// =====================
-// 捕获流程
-// =====================
 if (url.match(/\.(mp4|m3u8)(\?.*)?$/i)) {
-    let type = url.includes("m3u8") ? "📺 M3U8" : "🎥 MP4";
-    processVideo(`${type} 捕获成功`, url);
+    processVideo("🎥 视频捕获成功", url);
 } else if (isResponse && contentType.match(/(json|text|javascript)/i)) {
     try {
         if (body && body.length < 512000) {
             let matches = body.match(/https?:\/\/[^\s"'<>%]+?\.(mp4|m3u8)(?:[\w\.\-\?&=\/!%]*)/gi);
-            if (matches) {
-                processVideo("📡 API 视频捕获", matches[0]);
-            }
+            if (matches) processVideo("📡 API 视频捕获", matches[0]);
         }
     } catch (e) {}
 }
