@@ -5,7 +5,7 @@
 
 [Script]
 # 捕获响应体中的视频链接
-视频抓取 = type=http-response,pattern=^http,requires-body=1,script-path=https://raw.githubusercontent.com/你的用户名/你的仓库名/main/video.js,update-interval=86400
+视频抓取 = type=http-response,pattern=^http,requires-body=1,script-path=https://raw.githubusercontent.com/xqf8188/Surge-Modules/refs/heads/main/surge%20/video.js,update-interval=86400
 
 [MITM]
 # 这里建议添加一些常用的视频域名，或者使用通配符（慎用）
