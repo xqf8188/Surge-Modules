@@ -1,20 +1,19 @@
 /*
-Surge 万能抓视频脚本 V4.0 (防抖优化版)
-功能：性能过滤、5秒防抖(解决重复通知)、允许重复抓取、VLC跳转+长按复制
+Surge 万能抓视频脚本 V4.1 (路径级防抖版)
+功能：性能过滤、核心路径防抖(彻底解决重复通知)、允许重复抓取、VLC跳转+长按复制
 */
 
 // =====================
 // 1. 初始化与内存缓存
 // =====================
 const url = $request.url;
-const method = $request.method;
 const body = (typeof $response !== 'undefined' && $response.body) ? $response.body : "";
 const contentType = (typeof $response !== 'undefined' && $response.headers) ? ($response.headers['Content-Type'] || $response.headers['content-type'] || "") : "";
 
 const HISTORY_KEY = "VideoCatch_History";
 const MAX_HISTORY = 100;
 
-// 内存缓存：用于实现 5 秒短效防抖，解决同一个视频连续跳两次通知的问题
+// 使用 globalThis 确保跨请求持久化
 if (typeof globalThis.cacheNotified === 'undefined') {
     globalThis.cacheNotified = {};
 }
@@ -27,22 +26,23 @@ function log(msg) { console.log("🎬 [VideoCatch] " + msg); }
 // 2. 核心处理函数
 // =====================
 function processVideo(title, videoUrl) {
-    // 过滤分片：防止 TS 或 m4s 切片刷屏
+    // 过滤分片：防止切片刷屏
     if (videoUrl.includes(".ts") || videoUrl.includes("seg-") || videoUrl.match(/index_\d+\.m3u8/) || videoUrl.includes(".m4s")) {
         return;
-    }
+  }
 
-    // --- 核心逻辑：5秒短效防抖 ---
+    // --- 核心改进：基于核心路径的 5 秒防抖 ---
+    // 去掉 URL 中 ? 后面的参数再进行对比，防止带时间戳的链接绕过去重
+    let cleanUrl = videoUrl.split('?')[0];
     let now = Date.now();
-    // 如果该链接在过去 5000 毫秒内已经通知过，则直接拦截，不再跳通知
-    if (globalThis.cacheNotified[videoUrl] && (now - globalThis.cacheNotified[videoUrl] < 10000)) {
-        log("🚫 5秒内重复请求，已防抖拦截一次通知");
+    
+    if (globalThis.cacheNotified[cleanUrl] && (now - globalThis.cacheNotified[cleanUrl] < 5000)) {
+        log("🚫 路径级防抖：拦截重复通知");
         return;
     }
-    // 更新最后一次通知的时间戳
-    globalThis.cacheNotified[videoUrl] = now;
+    globalThis.cacheNotified[cleanUrl] = now;
 
-    // 保存/更新历史记录（将该视频置顶）
+    // 保存/更新历史记录
     let index = history.findIndex(item => item.url === videoUrl);
     if (index !== -1) history.splice(index, 1);
     history.unshift({
@@ -54,8 +54,8 @@ function processVideo(title, videoUrl) {
     $persistentStore.write(JSON.stringify(history), HISTORY_KEY);
 
     // 发送通知
-    // 跳转协议保持原样以确保播放成功率
-    let vlcUrl = "vlc://" + videoUrl;
+    let vlcUrl = videoUrl.replace(/^http/, "vlc"); // 还原最原始的 replace 协议转换
+    
     $notification.post(
         title,
         "点击跳转 VLC | 长按通知可复制链接",
@@ -72,7 +72,6 @@ function processVideo(title, videoUrl) {
 // =====================
 // 3. 性能过滤器
 // =====================
-// 排除静态资源请求，极大降低 CPU 开销
 if (url.match(/\.(png|jpg|jpeg|gif|webp|zip|gz|woff|ttf|css|js|svg)/i)) {
     $done({});
 }
@@ -87,11 +86,11 @@ if (url.match(/\.(mp4|m3u8)(\?.*)?$/i)) {
     processVideo(`${type} 捕获成功`, url);
 }
 
-// B. 扫描响应体 (仅限 JSON/Text 类型)
+// B. 扫描响应体 (仅限文本类型)
 else if (contentType.match(/(json|text|javascript)/i)) {
     try {
-        if (body && body.length < 512000) { // 限制 500KB 以下才解析
-            let matches = body.match(/https?:\/\/[^"'\s]+\.(mp4|m3u8)(?:[\w\.\-\?&=\/!%]*)/g);
+        if (body && body.length < 512000) {
+            let matches = body.match(/https?:\/\/[^\s"'<>%]+?\.(mp4|m3u8)(?:[\w\.\-\?&=\/!%]*)/gi);
             if (matches) {
                 [...new Set(matches)].forEach(v => processVideo("📡 API 视频捕获", v));
             }
