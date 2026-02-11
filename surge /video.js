@@ -1,31 +1,42 @@
 /*
-Surge 万能抓视频脚本 V3.0 (跳转修复版)
+Surge 万能抓视频脚本 V3.5 (终极兼容版)
+功能：性能过滤、去重、防切片干扰、原生协议跳转
 */
 
-const { url, responseHeaders, body } = $request;
-const isResponse = typeof $response !== "undefined";
-
+// =====================
+// 1. 初始化与配置
+// =====================
+const url = $request.url;
+const body = $response ? $response.body : null;
 const HISTORY_KEY = "VideoCatch_History";
 const NOTIFIED_KEY = "VideoCatch_Notified";
-const MAX_HISTORY = 80;
+const MAX_HISTORY = 100;
 
 let history = JSON.parse($persistentStore.read(HISTORY_KEY) || "[]");
 let notified = JSON.parse($persistentStore.read(NOTIFIED_KEY) || "[]");
 
-// 静态过滤器：排除非视频请求
-if (url.match(/\.(ts|jpg|jpeg|png|gif|css|js|woff|ttf|jsonp)/i)) {
+function log(msg) { console.log("🎬 [VideoCatch] " + msg); }
+
+// =====================
+// 2. 静态过滤器 (防止卡顿)
+// =====================
+if (url.match(/\.(ts|jpg|jpeg|png|gif|css|js|woff|ttf|jsonp|svg)/i)) {
     $done({});
 }
 
-function log(msg) { console.log("🎬 [VideoCatch] " + msg); }
-
-function saveAndNotify(title, videoUrl) {
+// =====================
+// 3. 核心处理函数
+// =====================
+function processVideo(title, videoUrl) {
+    // 去重检测
     if (notified.includes(videoUrl)) return;
-    // 过滤 M3U8 切片干扰
-    if (videoUrl.includes("seg-") || videoUrl.match(/\/(\d+)\.ts/)) return;
+    
+    // 过滤 M3U8 切片干扰 (关键：防止通知轰炸)
+    if (videoUrl.includes("seg-") || videoUrl.match(/\/(\d+)\.ts/) || videoUrl.includes(".m4s")) return;
 
+    // 保存历史记录
     notified.push(videoUrl);
-    if (notified.length > 150) notified.shift();
+    if (notified.length > 200) notified.shift();
     $persistentStore.write(JSON.stringify(notified), NOTIFIED_KEY);
 
     let newItem = {
@@ -37,40 +48,48 @@ function saveAndNotify(title, videoUrl) {
     if (history.length > MAX_HISTORY) history = history.slice(0, MAX_HISTORY);
     $persistentStore.write(JSON.stringify(history), HISTORY_KEY);
 
-    // --- 跳转逻辑修复核心 ---
-    // 1. 对原始 URL 进行编码，防止特殊字符截断协议
-    let encodedUrl = encodeURIComponent(videoUrl);
-    let vlcUrl = "vlc://" + encodedUrl;
-    
-    // 2. 双参数推送，确保 100% 触发跳转
+    // --- 跳转逻辑 (采用你原脚本最有效的 replace 方式) ---
+    let vlcUrl = videoUrl.replace(/^http/, "vlc");
+
     $notification.post(
-        title, 
-        "点击立即跳转 VLC 播放", 
-        `捕获地址: ${videoUrl}`, 
-        { 
-            "open-url": vlcUrl,   // Surge 官方推荐字段
-            "url": vlcUrl,        // 兼容性字段
-            "copy-output": videoUrl // 长按通知可复制原始链接
-        }
+        title,
+        "点击跳转 VLC | 链接已自动保存",
+        videoUrl,
+        { "open-url": vlcUrl, "url": vlcUrl } // 双字段保障跳转
     );
-    log(`✅ 捕获成功并发送通知: ${title}`);
+    log(`✅ 捕获并推送: ${title}`);
 }
 
-// 捕获逻辑
+// =====================
+// 4. 捕获逻辑流程
+// =====================
+
+// 策略 A: 识别 URL 后缀
 if (url.match(/\.(mp4|m3u8)(\?.*)?$/i)) {
     let type = url.includes("m3u8") ? "📺 M3U8" : "🎥 MP4";
-    saveAndNotify(`${type} 自动捕获`, url);
-} else if (isResponse && body) {
-    const contentType = ($response.headers['Content-Type'] || $response.headers['content-type'] || "");
-    if (contentType.match(/(json|text|javascript|application\/vnd\.apple\.mpegurl)/i)) {
-        try {
-            const regex = /https?:\/\/[^\s"'<>%]+?\.(mp4|m3u8)(?:[\w\.\-\?&=\/!%]*)/gi;
-            let matches = body.match(regex);
-            if (matches) {
-                [...new Set(matches)].forEach(v => saveAndNotify("📡 深度扫描捕获", v));
-            }
-        } catch (e) { log("解析错误: " + e); }
+    processVideo(`${type} 捕获成功`, url);
+}
+
+// 策略 B: 扫描响应体 (JSON/Text)
+else if (body) {
+    try {
+        // 匹配 http(s) 开头，mp4/m3u8 结尾的链接
+        const regex = /https?:\/\/[^\s"'<>%]+?\.(mp4|m3u8)(?:[\w\.\-\?&=\/!%]*)/gi;
+        let matches = body.match(regex);
+        if (matches) {
+            let uniqueMatches = [...new Set(matches)];
+            uniqueMatches.forEach(v => {
+                processVideo("📡 深度扫描捕获", v);
+            });
+        }
+    } catch (e) {
+        // 忽略非文本解析错误
     }
+}
+
+// 策略 C: 特定加密路径 (保留你原脚本的逻辑)
+if (url.includes("mfpt8g.com") || url.includes("vdmk") || url.includes("dlmk") || url.includes("decrypt")) {
+    processVideo("🔐 加密视频捕获", url);
 }
 
 $done({});
