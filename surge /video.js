@@ -1,127 +1,107 @@
 /*
-Surge 万能抓视频脚本（重复抓取 + 性能优化版）
-功能：允许重复捕获同一视频、去重通知关闭、长按复制、跳转 VLC
+Surge 万能抓视频脚本 V4.0 (防抖优化版)
+功能：性能过滤、5秒防抖(解决重复通知)、允许重复抓取、VLC跳转+长按复制
 */
 
-let url = $request.url;
-let method = $request.method;
-let body = (typeof $response !== 'undefined' && $response.body) ? $response.body : "";
-let contentType = (typeof $response !== 'undefined' && $response.headers) ? ($response.headers['Content-Type'] || $response.headers['content-type'] || "") : "";
+// =====================
+// 1. 初始化与内存缓存
+// =====================
+const url = $request.url;
+const method = $request.method;
+const body = (typeof $response !== 'undefined' && $response.body) ? $response.body : "";
+const contentType = (typeof $response !== 'undefined' && $response.headers) ? ($response.headers['Content-Type'] || $response.headers['content-type'] || "") : "";
 
-// =====================
-// 持久化储存配置
-// =====================
 const HISTORY_KEY = "VideoCatch_History";
 const MAX_HISTORY = 100;
 
+// 内存缓存：用于实现 5 秒短效防抖，解决同一个视频连续跳两次通知的问题
+if (typeof globalThis.cacheNotified === 'undefined') {
+    globalThis.cacheNotified = {};
+}
+
 let history = JSON.parse($persistentStore.read(HISTORY_KEY) || "[]");
 
-// 保存并更新历史记录
-function saveToHistory(title, videoUrl) {
-  let nowTime = new Date().toLocaleString('zh-CN', { hour12: false });
-  
-  // 查找是否已存在
-  let index = history.findIndex(item => item.url === videoUrl);
-  
-  if (index !== -1) {
-    // 如果存在，删除旧的，准备把新的置顶
-    history.splice(index, 1);
-  }
-  
-  let newItem = {
-    title: title,
-    url: videoUrl,
-    time: nowTime
-  };
-  
-  history.unshift(newItem); // 新记录/更新的记录排在最前面
-  
-  if (history.length > MAX_HISTORY) {
-    history = history.slice(0, MAX_HISTORY);
-  }
-  
-  $persistentStore.write(JSON.stringify(history), HISTORY_KEY);
-}
-
-function log(msg) {
-  console.log("🎬 [VideoCatch] " + msg);
-}
+function log(msg) { console.log("🎬 [VideoCatch] " + msg); }
 
 // =====================
-// VLC 跳转及保存逻辑
+// 2. 核心处理函数
 // =====================
 function processVideo(title, videoUrl) {
-  // 仍然保留对分片(TS)的过滤，否则刷屏太严重
-  if (videoUrl.includes(".ts") || videoUrl.includes("seg-") || videoUrl.match(/index_\d+\.m3u8/)) {
-    return;
-  }
-
-  // --- 关键修改：删除了 alreadyNotified 判断，允许重复抓取 ---
-
-  saveToHistory(title, videoUrl);
-
-  let vlcUrl = "vlc://" + videoUrl;
-  $notification.post(
-    title,
-    "点击跳转 VLC | 长按复制链接",
-    `抓取时间：${new Date().toLocaleTimeString()}\n${videoUrl}`,
-    { 
-      "url": vlcUrl,
-      "open-url": vlcUrl,
-      "copy-output": videoUrl 
+    // 过滤分片：防止 TS 或 m4s 切片刷屏
+    if (videoUrl.includes(".ts") || videoUrl.includes("seg-") || videoUrl.match(/index_\d+\.m3u8/) || videoUrl.includes(".m4s")) {
+        return;
     }
-  );
-  log(`✅ 捕获成功：${videoUrl}`);
+
+    // --- 核心逻辑：5秒短效防抖 ---
+    let now = Date.now();
+    // 如果该链接在过去 5000 毫秒内已经通知过，则直接拦截，不再跳通知
+    if (globalThis.cacheNotified[videoUrl] && (now - globalThis.cacheNotified[videoUrl] < 5000)) {
+        log("🚫 5秒内重复请求，已防抖拦截一次通知");
+        return;
+    }
+    // 更新最后一次通知的时间戳
+    globalThis.cacheNotified[videoUrl] = now;
+
+    // 保存/更新历史记录（将该视频置顶）
+    let index = history.findIndex(item => item.url === videoUrl);
+    if (index !== -1) history.splice(index, 1);
+    history.unshift({
+        title: title,
+        url: videoUrl,
+        time: new Date().toLocaleString('zh-CN', { hour12: false })
+    });
+    if (history.length > MAX_HISTORY) history = history.slice(0, MAX_HISTORY);
+    $persistentStore.write(JSON.stringify(history), HISTORY_KEY);
+
+    // 发送通知
+    // 跳转协议保持原样以确保播放成功率
+    let vlcUrl = "vlc://" + videoUrl;
+    $notification.post(
+        title,
+        "点击跳转 VLC | 长按通知可复制链接",
+        `抓取时间：${new Date().toLocaleTimeString()}\n${videoUrl}`,
+        { 
+            "url": vlcUrl, 
+            "open-url": vlcUrl, 
+            "copy-output": videoUrl 
+        }
+    );
+    log(`✅ 捕获成功：${videoUrl}`);
 }
 
 // =====================
-// 性能优化：排除无关请求
+// 3. 性能过滤器
 // =====================
+// 排除静态资源请求，极大降低 CPU 开销
 if (url.match(/\.(png|jpg|jpeg|gif|webp|zip|gz|woff|ttf|css|js|svg)/i)) {
-  $done({});
+    $done({});
 }
 
 // =====================
-// 1. 捕获 MP4
+// 4. 捕获流程
 // =====================
-if (url.includes(".mp4")) {
-  processVideo("🎥 MP4 捕获成功", url);
+
+// A. 匹配 URL 后缀
+if (url.match(/\.(mp4|m3u8)(\?.*)?$/i)) {
+    let type = url.includes("m3u8") ? "📺 M3U8" : "🎥 MP4";
+    processVideo(`${type} 捕获成功`, url);
 }
 
-// =====================
-// 2. 捕获 M3U8
-// =====================
-else if (url.includes(".m3u8") || body.includes("#EXTM3U")) {
-  // 排除掉明显的切片 URL 模式
-  if (!url.match(/(_\d+\.m3u8|\.ts)/)) {
-     processVideo("📺 M3U8 捕获成功", url);
-  }
+// B. 扫描响应体 (仅限 JSON/Text 类型)
+else if (contentType.match(/(json|text|javascript)/i)) {
+    try {
+        if (body && body.length < 512000) { // 限制 500KB 以下才解析
+            let matches = body.match(/https?:\/\/[^"'\s]+\.(mp4|m3u8)(?:[\w\.\-\?&=\/!%]*)/g);
+            if (matches) {
+                [...new Set(matches)].forEach(v => processVideo("📡 API 视频捕获", v));
+            }
+        }
+    } catch (e) {}
 }
 
-// =====================
-// 3. JSON/Text 视频链接扫描
-// =====================
-else if (contentType.includes("application/json") || contentType.includes("text/plain") || contentType.includes("javascript")) {
-  try {
-    if (body && body.length < 512000) {
-      let found = body.match(/https?:\/\/[^"'\s]+\.(mp4|m3u8)(?:[\w\.\-\?&=\/!%]*)/g);
-      if (found) {
-        found = [...new Set(found)];
-        found.forEach(v => {
-          processVideo("📡 API 视频捕获", v);
-        });
-      }
-    }
-  } catch (e) {}
-}
-
-// =====================
-// 4. 特殊路径
-// =====================
-if (
-  url.includes("mfpt8g.com") || url.includes("vdmk") || url.includes("dlmk") || url.includes("decrypt")
-) {
-  processVideo("🔐 加密视频捕获", url);
+// C. 特定路径匹配
+if (url.match(/(mfpt8g\.com|vdmk|dlmk|decrypt)/)) {
+    processVideo("🔐 加密视频捕获", url);
 }
 
 $done({});
