@@ -1,140 +1,134 @@
 /*
- * 网络信息 𝕏 + 流媒体 (全量无损版)
+ * 网络信息 𝕏 - 最终稳定版 (Quantumult X 专用)
  */
 
-const NAME = 'network-info'
-const $ = new Env(NAME)
+const $ = new Env("网络信息 𝕏");
 
-// --- 1. 参数与配置解析 ---
-let arg = (typeof $argument != 'undefined') ? Object.fromEntries($argument.split('&').map(item => item.split('='))) : {}
-arg = { ...arg, ...$.getjson(NAME, {}) }
+// --- 核心配置 ---
+let title = "网络信息 𝕏";
+let content = "";
+let results = {
+  direct: { ip: "未知", addr: "查询失败" },
+  proxy: { ip: "未知", addr: "查询失败" },
+  media: []
+};
 
-let title = '', content = '', proxy_policy = ''
-
-// --- 2. 核心执行逻辑 ---
 !(async () => {
-  // 延迟启动逻辑
-  if (arg.TYPE === 'EVENT') {
-    const eventDelay = parseFloat(arg.EVENT_DELAY || 3)
-    if (eventDelay) await $.wait(1000 * eventDelay)
+  // 1. 获取网络基础信息 (SSID/LAN)
+  let networkInfo = "";
+  if (typeof $network !== "undefined") {
+    const ssid = $network.wifi?.ssid;
+    const v4 = $network.v4?.primaryAddress;
+    if (ssid) networkInfo += `SSID: ${ssid}\n`;
+    if (v4) networkInfo += `LAN: ${v4}\n`;
   }
+  if (networkInfo) networkInfo += "\n";
 
-  // SSID 与 LAN 获取
-  let SSID = '', LAN = ''
-  if (typeof $network !== 'undefined') {
-    if (arg.SSID == 1) SSID = $.lodash_get($network, 'wifi.ssid') || ''
-    const v4 = $.lodash_get($network, 'v4.primaryAddress')
-    if (v4 && arg.LAN == 1) LAN = `LAN: ${v4}\n\n`
-  }
-  SSID = SSID ? `SSID: ${SSID}\n\n` : ''
-
-  // --- 3. 并行执行：IP 查询 + 流媒体检测 ---
-  // 这里使用了原版脚本的“多源冗余”思想，保证一个接口挂了另一个能顶上
-  let [direct, proxy, mediaResults] = await Promise.all([
-    getDirectInfo(),
-    getProxyInfo(),
+  // 2. 并行执行所有任务，设置 5 秒强制超时
+  await Promise.all([
+    getDirectIP(),
+    getProxyIP(),
     checkMedia()
-  ])
+  ]).timeout(5000).catch(e => console.log("部分查询超时"));
 
-  // --- 4. 组装展示内容 ---
-  const mediaContent = `\n\n---------- 流媒体检测 ----------\n${mediaResults.join('\n')}`
-  
-  title = proxy.policy || '网络信息 𝕏'
-  content = `${SSID}${LAN}直连 IP: ${maskIP(direct.ip)}\n📍 ${direct.info}\n\n落地 IP: ${maskIP(proxy.ip)}\n📍 ${proxy.info}${mediaContent}`
+  // 3. 组装内容
+  const directPart = `直连 IP: ${mask(results.direct.ip)}\n📍 ${results.direct.addr}`;
+  const proxyPart = `落地 IP: ${mask(results.proxy.ip)}\n📍 ${results.proxy.addr}`;
+  const mediaPart = `\n\n---------- 流媒体检测 ----------\n${results.media.join("\n")}`;
 
-  // 时间戳
-  if (typeof $argument === 'undefined' || !$argument.includes('interaction')) {
-    content += `\n执行时间: ${new Date().toTimeString().split(' ')[0]}`
+  content = `${networkInfo}${directPart}\n\n${proxyPart}${mediaPart}`;
+
+  // 4. 判断运行模式输出结果
+  if (typeof $tile !== "undefined") {
+    // 面板模式
+    $.done({
+      title: results.proxy.ip !== "未知" ? `节点: ${results.proxy.addr.split(' ')[0]}` : title,
+      content: content,
+      icon: "network",
+      "icon-color": "#5AC8FA"
+    });
+  } else {
+    // 弹窗或普通模式
+    $.msg(title, "", content);
+    $.done();
   }
-
-  // --- 5. 输出结果 ---
-  if (typeof $argument !== 'undefined' && $argument.includes('tile')) {
-    $.msg('网络信息', '查询完成', content)
-  }
-  $.done({ title, content })
-
 })().catch(e => {
-  $.logErr(e)
-  $.done({ title: '脚本错误', content: e.message })
-})
+  console.log("脚本崩溃: " + e);
+  $.done();
+});
 
-// ======= 核心功能函数 (仿照原版精密逻辑) =======
+// ======= 查询函数集 =======
 
-async function getDirectInfo() {
-  // 多接口轮询：确保直连 IP 不会显示“未知”
-  const sources = [
-    { url: 'https://forge.speedtest.cn/api/location/info', parse: b => JSON.parse(b).ip },
-    { url: 'https://ip.tool.lu/api/ip', parse: b => b.split(': ')[1] },
-    { url: 'https://www.baidu.com/s?wd=ip', parse: b => b.match(/IP地址:&nbsp;(\d+\.\d+\.\d+\.\d+)/)?.[1] }
-  ]
-  for (let s of sources) {
-    try {
-      let res = await http({ url: s.url, timeout: 3000 })
-      let ip = s.parse(res.body)
-      if (ip) return { ip, info: '中国 运营商网络' }
-    } catch (e) {}
-  }
-  return { ip: '未知', info: '查询失败' }
+async function getDirectIP() {
+  return new Promise(resolve => {
+    $.get({ url: "https://httpbin.org/ip" }, (err, resp, data) => {
+      try {
+        results.direct.ip = JSON.parse(data).origin.split(',')[0];
+        results.direct.addr = "本地网络";
+      } catch (e) {}
+      resolve();
+    });
+  });
 }
 
-async function getProxyInfo() {
-  try {
-    // 优先使用 ip-api 这种带详细信息的接口
-    let res = await http({ url: 'http://ip-api.com/json/?lang=zh-CN', timeout: 3500, ...getNodeOpt() })
-    let data = JSON.parse(res.body)
-    return { ip: data.query, info: `${data.country} ${data.city}`, policy: $arguments || '代理节点' }
-  } catch (e) {
-    return { ip: '未知', info: '节点连接超时', policy: '' }
-  }
+async function getProxyIP() {
+  return new Promise(resolve => {
+    // 使用带 policy 的参数确保走代理
+    let opts = { url: "http://ip-api.com/json/?lang=zh-CN" };
+    if (typeof $argument !== "undefined") opts.opts = { policy: $argument };
+
+    $.get(opts, (err, resp, data) => {
+      try {
+        const info = JSON.parse(data);
+        results.proxy.ip = info.query;
+        results.proxy.addr = `${info.country} ${info.city}`;
+      } catch (e) {}
+      resolve();
+    });
+  });
 }
 
 async function checkMedia() {
-  const tests = [
-    { name: 'YouTube', url: 'https://www.youtube.com/premium', check: 'Premium' },
-    { name: 'Netflix', url: 'https://www.netflix.com/title/81215561', check: 'Netflix' },
-    { name: 'ChatGPT', url: 'https://ios.chat.openai.com/public-api/mobile/server_status', check: '200' }
-  ]
-  return await Promise.all(tests.map(async t => {
-    try {
-      let res = await http({ url: t.url, timeout: 3000, ...getNodeOpt() })
-      if (res.body.includes(t.check)) return `✅ ${t.name}: 已解锁`
-      return `❌ ${t.name}: 未解锁`
-    } catch (e) { return `⚠️ ${t.name}: 检测超时` }
-  }))
+  const mediaList = [
+    { name: "YouTube", url: "https://www.youtube.com/premium", key: "Premium" },
+    { name: "Netflix", url: "https://www.netflix.com/title/81215561", key: "Netflix" },
+    { name: "ChatGPT", url: "https://ios.chat.openai.com/public-api/mobile/server_status", key: "200" }
+  ];
+
+  const tasks = mediaList.map(item => {
+    return new Promise(resolve => {
+      let opts = { url: item.url };
+      if (typeof $argument !== "undefined") opts.opts = { policy: $argument };
+      
+      $.get(opts, (err, resp, data) => {
+        if (data && data.includes(item.key)) {
+          results.media.push(`✅ ${item.name}: 已解锁`);
+        } else {
+          results.media.push(`❌ ${item.name}: 未解锁`);
+        }
+        resolve();
+      });
+    });
+  });
+  return Promise.all(tasks);
 }
 
-// 隐私遮罩函数：保留你原版的 mask 风格
-function maskIP(ip) {
-  if (!ip || ip === '未知') return ip
-  return ip.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, '$1.$2.*.*')
+// 辅助：打马赛克
+function mask(ip) {
+  if (!ip || ip === "未知") return ip;
+  return ip.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, "$1.$2.*.*");
 }
 
-// 获取节点参数：关键！确保流媒体检测走代理
-function getNodeOpt() {
-  return (typeof $argument !== 'undefined' && !isTile()) ? { "policy": $argument } : {}
+// ======= 核心环境 (Env) 注入 =======
+function Env(name) {
+  this.name = name;
+  this.get = (opts, cb) => $httpClient.get(opts, cb);
+  this.msg = (t, s, m) => $notification.post(t, s, m);
+  this.done = (obj) => $done(obj);
 }
 
-function isTile() { return typeof $argument !== 'undefined' && $argument.includes('tile') }
-
-// --- 适配 QX 的底层网络函数 ---
-async function http(opt) {
-  return new Promise((resolve, reject) => {
-    $httpClient.get(opt, (err, resp, body) => {
-      if (err) reject(err)
-      else resolve({ ...resp, body })
-    })
-  })
-}
-
-// --- 标准 Env 环境封装 ---
-function Env(n) {
-  this.name = n
-  this.getjson = (k) => JSON.parse($persistentStore.read(k) || '{}')
-  this.setjson = (v, k) => $persistentStore.write(JSON.stringify(v), k)
-  this.lodash_get = (o, p) => p.split('.').reduce((a, c) => a?.[c], o)
-  this.msg = (t, s, m) => $notification.post(t, s, m)
-  this.wait = (ms) => new Promise(r => setTimeout(r, ms))
-  this.log = (m) => console.log(m)
-  this.logErr = (e) => console.log(`ERROR: ${e}`)
-  this.done = (o) => $done(o)
-}
+// 补充 Promise 超时逻辑
+Promise.prototype.timeout = function (ms) {
+  let timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms));
+  return Promise.race([this, timeout]);
+};
