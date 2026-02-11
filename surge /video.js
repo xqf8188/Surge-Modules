@@ -1,13 +1,13 @@
 /*
-Surge 万能抓视频脚本（VLC 跳转 + 性能优化版）
-功能：捕获视频、去重通知、过滤切片、降低系统开销
+Surge 万能抓视频脚本（性能优化 + 复制跳转增强版）
+功能：捕获视频、去重通知、过滤切片、点击跳转、长按复制
 */
 
-const url = $request.url;
-const method = $request.method;
-// 性能优化：只有在响应存在时才读取 body
-const body = (typeof $response !== 'undefined' && $response.body) ? $response.body : "";
-const contentType = (typeof $response !== 'undefined' && $response.headers) ? ($response.headers['Content-Type'] || $response.headers['content-type'] || "") : "";
+let url = $request.url;
+let method = $request.method;
+// 只有在响应存在时才读取 body，并增加内容类型判断
+let body = (typeof $response !== 'undefined' && $response.body) ? $response.body : "";
+let contentType = (typeof $response !== 'undefined' && $response.headers) ? ($response.headers['Content-Type'] || $response.headers['content-type'] || "") : "";
 
 // =====================
 // 持久化储存配置
@@ -36,7 +36,6 @@ function saveToHistory(title, videoUrl) {
     history.unshift(newItem);
     if (history.length > MAX_HISTORY) history = history.slice(0, MAX_HISTORY);
     $persistentStore.write(JSON.stringify(history), HISTORY_KEY);
-    log(`✅ 已存入历史 (共 ${history.length} 条)`);
   }
 }
 
@@ -49,12 +48,12 @@ function log(msg) {
 }
 
 // =====================
-// VLC 跳转逻辑 (保持原样)
+// VLC 跳转及保存逻辑 (增强版)
 // =====================
 function processVideo(title, videoUrl) {
-  // M3U8 误报过滤：如果链接包含 .ts 或常见的切片关键字，则忽略
-  if (videoUrl.includes(".ts") || videoUrl.includes("seg-") || videoUrl.match(/\/(\d+)\.m3u8/)) {
-    // 排除掉类似 index_0.m3u8 这种切片索引，只抓主文件
+  // --- 优化项：M3U8 切片过滤 ---
+  // 过滤掉 .ts 片段以及常见的 m3u8 子索引（如 index_0.m3u8）
+  if (videoUrl.includes(".ts") || videoUrl.includes("seg-") || videoUrl.match(/index_\d+\.m3u8/)) {
     return;
   }
 
@@ -62,20 +61,27 @@ function processVideo(title, videoUrl) {
 
   saveToHistory(title, videoUrl);
 
+  // 跳转协议保持原样
   let vlcUrl = "vlc://" + videoUrl;
+
+  // --- 增强项：点击跳转 + 长按复制 ---
   $notification.post(
     title,
-    "点击跳转 VLC | 链接已自动保存",
+    "点击跳转 VLC | 长按通知可复制链接",
     videoUrl,
-    { url: vlcUrl }
+    { 
+      "url": vlcUrl,            // 点击跳转动作
+      "open-url": vlcUrl,       // 兼容性跳转字段
+      "copy-output": videoUrl   // 长按显示的复制选项
+    }
   );
+  log(`✅ 捕获成功：${videoUrl}`);
 }
 
 // =====================
-// 性能过滤逻辑 (优化项 1)
+// 性能优化：静态资源预排除
 // =====================
-// 如果是图片、字体、样式表等无关请求，直接结束
-if (url.match(/\.(png|jpg|jpeg|gif|webp|zip|gz|woff|ttf|css|js)/i)) {
+if (url.match(/\.(png|jpg|jpeg|gif|webp|zip|gz|woff|ttf|css|js|svg)/i)) {
   $done({});
 }
 
@@ -87,23 +93,24 @@ if (url.includes(".mp4")) {
 }
 
 // =====================
-// 2. 捕获 M3U8 (优化项 2：增加切片指纹过滤)
+// 2. 捕获 M3U8 (优化过滤)
 // =====================
 else if (url.includes(".m3u8") || body.includes("#EXTM3U")) {
-  // 仅当 URL 不包含明显的切片特征时才通知
+  // 排除掉明显的切片 URL 模式后再通知
   if (!url.match(/(_\d+\.m3u8|\.ts)/)) {
      processVideo("📺 M3U8 捕获成功", url);
   }
 }
 
 // =====================
-// 3. JSON 视频链接 (优化项 3：仅处理 JSON/Text 类型)
+// 3. JSON 视频链接 (性能优化：限定类型与长度)
 // =====================
-else if (contentType.includes("application/json") || contentType.includes("text/plain") || contentType.includes("application/x-javascript")) {
+else if (contentType.includes("application/json") || contentType.includes("text/plain") || contentType.includes("javascript")) {
   try {
-    // 只有 Body 长度小于 500KB 才解析，防止解析超大 JSON 导致卡顿
-    if (body.length > 0 && body.length < 512000) {
-      let found = body.match(/https?:\/\/[^"']+\.(mp4|m3u8)/g);
+    // 只有 Body 长度在合理范围（<500KB）才解析，避免大文件卡顿
+    if (body && body.length < 512000) {
+      // 这里的正则直接扫描，不进行 JSON.parse 以提高容错和速度
+      let found = body.match(/https?:\/\/[^"'\s]+\.(mp4|m3u8)(?:[\w\.\-\?&=\/!%]*)/g);
       if (found) {
         found = [...new Set(found)];
         found.forEach(v => {
