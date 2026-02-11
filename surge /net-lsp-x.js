@@ -1,37 +1,40 @@
 /*
- * 网络信息 𝕏 - Surge 稳定修复版
- * 专门解决面板显示“未知”而通知正常的问题
+ * 网络信息 𝕏 - Surge 稳定版 (修正面板未知问题)
  */
 
 const $ = new Env("网络信息 𝕏");
 
-// 执行主逻辑
+// 主逻辑采用更激进的超时策略
 (async () => {
-  $.log("开始执行网络查询...");
-
-  // 1. 基础信息获取
-  const ssid = $network.wifi.ssid || "Cellular";
+  // 1. 基础信息立即获取 (非异步)
+  const ssid = $network.wifi.ssid || "蜂窝数据";
   const v4 = $network.v4.primaryAddress || "N/A";
 
-  // 2. 并行执行查询 (增加强制超时控制)
+  // 2. 封装查询，确保 3 秒内无论如何都得返回给面板
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => resolve("timeout"), 3500); 
+  });
+
+  const fetchPromise = Promise.all([
+    getDirectIP(),
+    getProxyIP(),
+    checkMedia()
+  ]);
+
   try {
-    const results = await Promise.all([
-      getDirectIP(),
-      getProxyIP(),
-      checkMedia()
-    ]);
+    const result = await Promise.race([fetchPromise, timeoutPromise]);
 
-    const [direct, proxy, media] = results;
+    if (result === "timeout" || !result) {
+      throw new Error("Timeout");
+    }
 
-    // 3. 组装面板内容 (精简版，防止溢出)
+    const [direct, proxy, media] = result;
+
+    // 3. 组装显示
     const panelStr = `直连: ${mask(direct.ip)} | ${direct.info}\n落地: ${mask(proxy.ip)} | ${proxy.info}\n流媒体: YT:${media[0]} NF:${media[1]} GPT:${media[2]}`;
-
-    // 4. 组装通知内容 (详细版)
     const notifyStr = `SSID: ${ssid} | LAN: ${v4}\n\n直连: ${mask(direct.ip)} (${direct.info})\n落地: ${mask(proxy.ip)} (${proxy.info})\n\nYT: ${media[0]} | NF: ${media[1]} | GPT: ${media[2]}`;
 
-    // 5. 根据环境输出
     if (typeof $panel !== "undefined") {
-      // 必须严格遵守 Surge 面板的返回格式
       $done({
         title: `网络: ${ssid}`,
         content: panelStr,
@@ -43,16 +46,25 @@ const $ = new Env("网络信息 𝕏");
       $done();
     }
   } catch (err) {
-    $.log("执行出错: " + err);
-    $done();
+    // 如果超时或出错，至少把已知的信息显示出来，不显示“未知”
+    if (typeof $panel !== "undefined") {
+      $done({
+        title: `网络: ${ssid}`,
+        content: `基础信息已获取，网络查询超时...\nLAN: ${v4}\n请点击面板重试`,
+        icon: "exclamationmark.circle",
+        "icon-color": "#FF3B30"
+      });
+    } else {
+      $done();
+    }
   }
 })();
 
-// ======= 查询模块 =======
+// ======= 查询模块 (保持你的逻辑，但增加严谨性) =======
 
 function getDirectIP() {
   return new Promise(resolve => {
-    $httpClient.get("https://httpbin.org/ip", (err, resp, data) => {
+    $httpClient.get({url: "https://httpbin.org/ip", timeout: 2000}, (err, resp, data) => {
       try {
         const ip = JSON.parse(data).origin.split(',')[0];
         resolve({ ip: ip, info: "直连" });
@@ -65,7 +77,8 @@ function getDirectIP() {
 
 function getProxyIP() {
   return new Promise(resolve => {
-    $httpClient.get("http://ip-api.com/json/?lang=zh-CN", (err, resp, data) => {
+    // 强制增加 2.5秒超时，防止拖慢面板
+    $httpClient.get({url: "http://ip-api.com/json/?lang=zh-CN", timeout: 2500}, (err, resp, data) => {
       try {
         const info = JSON.parse(data);
         resolve({ ip: info.query, info: info.country });
@@ -84,14 +97,13 @@ function checkMedia() {
   ];
   return Promise.all(list.map(item => {
     return new Promise(resolve => {
-      $httpClient.get({ url: item.url, timeout: 2500 }, (err, resp, data) => {
+      $httpClient.get({ url: item.url, timeout: 2000 }, (err, resp, data) => {
         resolve(!err && data && data.includes(item.key) ? "✅" : "❌");
       });
     });
   }));
 }
 
-// ======= 工具模块 =======
 function mask(ip) {
   if (!ip || ip === "未知") return ip;
   const parts = ip.split('.');
