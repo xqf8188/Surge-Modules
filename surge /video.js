@@ -35,7 +35,7 @@ function processVideo(title, videoUrl) {
     // --- 核心逻辑：5秒短效防抖 ---
     let now = Date.now();
     // 如果该链接在过去 5000 毫秒内已经通知过，则直接拦截，不再跳通知
-    if (globalThis.cacheNotified[videoUrl] && (now - globalThis.cacheNotified[videoUrl] < 5000)) {
+    if (globalThis.cacheNotified[videoUrl] && (now - globalThis.cacheNotified[videoUrl] < 10000)) {
         log("🚫 5秒内重复请求，已防抖拦截一次通知");
         return;
     }
