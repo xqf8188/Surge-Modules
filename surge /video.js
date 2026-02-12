@@ -1,6 +1,6 @@
 /*
-Surge 万能抓视频脚本 V5.7 (链接清洗版)
-功能：去 token 复制、存储限 2 条、1 分钟清理、VLC 跳转
+Surge 万能抓视频脚本 V5.6 (复制+跳转双修复版)
+功能：性能过滤、存储限2条、1分钟清理、强制长按复制、稳定跳转
 */
 
 const url = $request.url;
@@ -42,10 +42,10 @@ function processVideo(title, videoUrl) {
 
     // --- 逻辑 C：存储重复判断 ---
     let isExist = history.some(item => item.url === videoUrl);
-    if (isExist) return;
-
-    // --- 🚀 逻辑 D：链接清洗 (去掉 ? 后面内容) ---
-    let cleanUrl = videoUrl.split('?')[0]; // 提取问号前的部分
+    if (isExist) {
+        log("🚫 存储中已存在相同链接，跳过通知");
+        return;
+    }
 
     // 更新状态
     $persistentStore.write(now.toString(), LOCK_TIME_KEY);
@@ -59,23 +59,26 @@ function processVideo(title, videoUrl) {
     $persistentStore.write(JSON.stringify(history), HISTORY_KEY);
 
     // =====================
-    // 🚀 跳转与复制逻辑
+    // 🚀 跳转与复制逻辑修复核心
     // =====================
-    // 跳转用：建议带上 token 保证 VLC 能正常解析鉴权
+    // 1. 跳转用：必须编码，防止特殊字符截断协议
     let encodedUrl = encodeURIComponent(videoUrl);
     let vlcUrl = "vlc-x-callback://x-callback-url/stream?url=" + encodedUrl;
+    
+    // 2. 备用跳转方案（如果 x-callback 不起作用，请尝试切换为这个）
+    // let vlcUrl = "vlc://" + encodedUrl;
 
-    // 复制用：使用刚才切好的 cleanUrl
+    // 3. 复制用：直接使用原始 videoUrl 字符串
     $notification.post(
       title,
-      "👉 点击跳转 | 🕒 长按【复制】纯净链接",
-      "已自动剔除 Token 等参数\n" + cleanUrl,
+      "👉 点击跳转播放 | 🕒 1分钟后清理",
+      "长按通知可直接【复制】视频链接\n" + videoUrl,
       { 
-        "open-url": vlcUrl,      // 点击跳转带 token
-        "copy-output": cleanUrl  // 长按复制不带 token
+        "open-url": vlcUrl,      // 点击触发跳转
+        "copy-output": videoUrl  // 强制指定长按复制的内容为原始链接
       }
     );
-    log(`✅ 捕获成功 | 原始链接: ${videoUrl} | 纯净链接: ${cleanUrl}`);
+    log(`✅ 捕获成功 | 链接: ${videoUrl}`);
 }
 
 // =====================
