@@ -1,20 +1,23 @@
 /*
-Surge 万能抓视频脚本（VLC 跳转 + 历史循环版）
+Surge 万能抓视频脚本（长按通知选择播放器版）
 兼容 Surge 5.16.x
-规则：
-- 只以 history 去重
-- history 只保留 2 条
-- 被挤出历史的链接 → 可再次抓取
+
+功能：
+- MP4 / M3U8 / JSON / 特殊路径抓取
+- 历史仅保留 2 条（循环）
+- 单条通知
+- 点击通知：VLC 播放
+- 长按通知：选择 VLC / nPlayer / Infuse / IINA / Safari
 */
 
 let url = $request.url;
 let body = $response.body || "";
 
 // =====================
-// 持久化储存配置
+// 存储配置
 // =====================
 const HISTORY_KEY = "VideoCatch_History";
-const MAX_HISTORY = 2; // ✅ 只保留 2 条
+const MAX_HISTORY = 2;
 
 // 读取历史
 let history = JSON.parse($persistentStore.read(HISTORY_KEY) || "[]");
@@ -26,20 +29,16 @@ function log(msg) {
   console.log("🎬 [VideoCatch] " + msg);
 }
 
-// 判断是否已在历史中
 function alreadyCaptured(videoUrl) {
   return history.some(item => item.url === videoUrl);
 }
 
-// 保存历史（循环 2 条）
 function saveToHistory(title, videoUrl) {
-  let newItem = {
-    title: title,
+  history.unshift({
+    title,
     url: videoUrl,
-    time: new Date().toLocaleString('zh-CN', { hour12: false })
-  };
-
-  history.unshift(newItem);
+    time: new Date().toLocaleString("zh-CN", { hour12: false })
+  });
 
   if (history.length > MAX_HISTORY) {
     history = history.slice(0, MAX_HISTORY);
@@ -50,7 +49,20 @@ function saveToHistory(title, videoUrl) {
 }
 
 // =====================
-// VLC 跳转 + 保存
+// 播放器 Action 菜单
+// =====================
+function buildActions(videoUrl) {
+  return [
+    { title: "▶ VLC",     url: "vlc://" + videoUrl },
+    { title: "▶ nPlayer", url: "nplayer-" + videoUrl },
+    { title: "▶ Infuse",  url: "infuse://x-callback-url/play?url=" + encodeURIComponent(videoUrl) },
+    { title: "▶ IINA",    url: "iina://weblink?url=" + encodeURIComponent(videoUrl) },
+    { title: "▶ Safari",  url: videoUrl }
+  ];
+}
+
+// =====================
+// 核心处理
 // =====================
 function processVideo(title, videoUrl) {
   if (alreadyCaptured(videoUrl)) {
@@ -60,17 +72,19 @@ function processVideo(title, videoUrl) {
 
   saveToHistory(title, videoUrl);
 
-  let vlcUrl = "vlc://" + videoUrl;
   $notification.post(
     title,
-    "点击跳转 VLC｜历史仅保留 2 条",
+    "点击默认 VLC｜长按选择播放器",
     videoUrl,
-    { url: vlcUrl }
+    {
+      url: "vlc://" + videoUrl,          // 直接点通知
+      actions: buildActions(videoUrl)    // 长按菜单
+    }
   );
 }
 
 // =====================
-// 1. 捕获 MP4
+// 1. MP4
 // =====================
 if (url.includes(".mp4")) {
   log("发现 MP4：\n" + url);
@@ -79,7 +93,7 @@ if (url.includes(".mp4")) {
 }
 
 // =====================
-// 2. 捕获 M3U8
+// 2. M3U8
 // =====================
 else if (url.includes(".m3u8") || body.includes("#EXTM3U")) {
   log("发现 M3U8：\n" + url);
@@ -88,7 +102,7 @@ else if (url.includes(".m3u8") || body.includes("#EXTM3U")) {
 }
 
 // =====================
-// 3. JSON / API 中提取视频
+// 3. JSON / API
 // =====================
 else {
   try {
