@@ -11,7 +11,7 @@ let body = $response.body || "";
 // 持久化储存配置
 // =====================
 const HISTORY_KEY = "VideoCatch_History";
-const MAX_HISTORY = 100; // 最大储存 100 条
+const MAX_HISTORY = 2; // 最大储存 100 条
 
 // 读取数据
 let history = JSON.parse($persistentStore.read(HISTORY_KEY) || "[]");
