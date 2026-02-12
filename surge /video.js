@@ -1,5 +1,5 @@
 /*
-Surge 万能抓视频脚本（VLC 跳转 + 历史循环版）
+Surge 万能抓视频脚本（SenPlayer 跳转 + 历史循环版）
 兼容 Surge 5.16.x
 规则：
 - 只以 history 去重
@@ -50,7 +50,7 @@ function saveToHistory(title, videoUrl) {
 }
 
 // =====================
-// VLC 跳转 + 保存
+// SenPlayer 跳转 + 保存
 // =====================
 function processVideo(title, videoUrl) {
   if (alreadyCaptured(videoUrl)) {
@@ -60,12 +60,13 @@ function processVideo(title, videoUrl) {
 
   saveToHistory(title, videoUrl);
 
-  let vlcUrl = "vlc://" + videoUrl;
+  let senUrl = "senplayer://x-callback-url/play?url=" + encodeURIComponent(videoUrl);
+
   $notification.post(
     title,
-    "点击跳转 VLC｜历史仅保留 2 条",
+    "点击跳转 SenPlayer｜历史仅保留 2 条",
     videoUrl,
-    { url: vlcUrl }
+    { url: senUrl }
   );
 }
 
